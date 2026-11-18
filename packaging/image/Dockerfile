@@ -44,6 +44,11 @@ COPY .release/azahar-source/azahar-LICENSE.txt /usr/share/doc/azahar/LICENSE.txt
 RUN useradd --create-home --uid 1000 azahar && mkdir /work && chown azahar:azahar /work
 USER azahar
 WORKDIR /work
-ENV AZAHAR_BIN=/opt/azahar/AppRun
+# State and HOME under /tmp, so the image also works with
+# `--user "$(id -u):$(id -g)"` (any uid, no passwd entry), which is how a
+# mounted /work stays writable for the host user.
+ENV AZAHAR_BIN=/opt/azahar/AppRun \
+    HOME=/tmp \
+    MCP_AZAHAR_STATE_DIR=/tmp/mcp-azahar
 ENTRYPOINT ["mcp-azahar"]
 CMD ["serve"]

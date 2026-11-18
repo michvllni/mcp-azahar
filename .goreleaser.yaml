@@ -87,9 +87,8 @@ changelog:
       - "^chore:"
 
 release:
-  # Azahar's corresponding source for the container image (GPL, D10).
-  extra_files:
-    - glob: ./.release/azahar-source/azahar-unified-source-*.tar.xz
+  # Azahar's source tarball (GPL, D10) is attached by release.yml before
+  # goreleaser runs, so a pushed image never lacks it.
   # The GitHub release already exists: keep its notes, keep its title
   # (RELEASE_NAME from the workflow; tag when unset, e.g. local dry runs).
   mode: keep-existing

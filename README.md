@@ -29,11 +29,22 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
 
 ## Install
 - **Container image** (Linux/amd64; includes Azahar, Xvfb and Mesa, nothing
-  else to install): `docker run -i --rm -v "$PWD:/work" ghcr.io/michvllni/mcp-azahar`
-  starts the MCP server over stdio with your project as `/work`; append a CLI
-  command to run it instead, e.g. `... ghcr.io/michvllni/mcp-azahar version`.
-  Do not publish UDP port 45987 (`-p`) or use `--network host`: Azahar's RPC
-  server is unauthenticated. Run one container per parallel session.
+  else to install):
+  ```sh
+  docker run -i --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/michvllni/mcp-azahar
+  ```
+  starts the MCP server over stdio with your project as `/work` (`--user`
+  keeps files it writes yours). A session lives as long as its container, so
+  run several CLI commands in one container:
+  ```sh
+  docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint sh \
+    ghcr.io/michvllni/mcp-azahar -euc 'mcp-azahar launch app.3dsx --elf app.elf
+      mcp-azahar sequence smoke.yaml; mcp-azahar stop'
+  ```
+  or keep one running (`docker run -d ... --entrypoint sleep ... infinity`) and
+  use `docker exec`. Do not publish UDP port 45987 (`-p`) or use
+  `--network host`: Azahar's RPC server is unauthenticated. Run one container
+  per parallel session.
 - **Release binaries**: archives for Linux, macOS and Windows (amd64, arm64)
   on the [releases page](https://github.com/michvllni/mcp-azahar/releases).
 - **Go**: `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.

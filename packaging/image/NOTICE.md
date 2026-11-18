@@ -10,14 +10,18 @@ This image is an unofficial tool, not affiliated with the Azahar project.
   `/opt/azahar/AZAHAR_VERSION`, extracted): GPL-3.0
   (`/usr/share/doc/azahar/LICENSE.txt`). Its complete corresponding source,
   `azahar-unified-source-<version>.tar.xz` as published by Azahar, is attached
-  to the mcp-azahar GitHub release of this image's version. The AppImage
-  bundles Qt (LGPL-3.0) and other libraries; their sources are listed in
-  Azahar's source tarball and at https://github.com/azahar-emu/azahar.
+  to the mcp-azahar GitHub release of this image's version.
+- **Qt 6.8.2** (bundled in the AppImage, `/opt/azahar/usr/lib/libQt6*`):
+  LGPL-3.0 (`/usr/share/common-licenses/LGPL-3` and `GPL-3`). Source:
+  https://download.qt.io/archive/qt/6.8/6.8.2/single/qt-everywhere-src-6.8.2.tar.xz.
+  Other libraries in the AppImage are listed with their licenses in Azahar's
+  source tarball (`externals/`) and at https://github.com/azahar-emu/azahar.
 - **Debian packages** (Xvfb, Mesa and libraries): their licenses are in
   `/usr/share/doc/<package>/copyright`; sources at
   https://snapshot.debian.org for the versions installed.
 
-Usage: `docker run -i --rm -v "$PWD:/work" ghcr.io/michvllni/mcp-azahar`
-starts the MCP server over stdio; tools read and write files under `/work`.
+Usage: `docker run -i --rm --user "$(id -u):$(id -g)" -v "$PWD:/work"
+ghcr.io/michvllni/mcp-azahar` starts the MCP server over stdio; tools read and
+write files under `/work`.
 Do not publish UDP port 45987 or use `--network host`: Azahar's RPC server is
 unauthenticated.

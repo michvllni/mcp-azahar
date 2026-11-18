@@ -111,9 +111,16 @@ goreleaser check && goreleaser build --snapshot --clean
   version (SemVer suffix like `-rc.1` ⇔ pre-release). Then it tests and runs
   goreleaser, which uploads the archives into that release, keeping its
   notes and title (`.goreleaser.yaml` `release:`).
-- The release job also builds and pushes the image
-  `ghcr.io/michvllni/mcp-azahar` (`<version>`, `latest` unless a
-  pre-release) and attaches Azahar's source tarball (GPL, D10). CI job
+- The release job first attaches Azahar's source tarball (GPL, D10),
+  then goreleaser pushes the image `ghcr.io/michvllni/mcp-azahar`
+  (`<version>`, `latest` unless a pre-release) before uploading the
+  archives. One-time, after the first release: set the ghcr package to
+  public (package settings) and check it is linked to the repository;
+  private packages break `docker pull` and the MCP Registry's OCI check.
+  If the job fails after the push, re-run it (uploads use the existing
+  release) rather than deleting the release, or delete the pushed tags
+  too. The SBOM attestation and the push only run at a real release (CI
+  builds a snapshot without them). CI job
   `image` builds it as a snapshot and launches the fixture inside it.
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
   then create a GitHub release on `main` with a new tag `v<version>` and
@@ -192,7 +199,10 @@ goreleaser check && goreleaser build --snapshot --clean
   `AZAHAR_SOURCE_SHA256` as Dockerfile ARGs (bump by hand, all three
   together: digests of `azahar.AppImage` and
   `azahar-unified-source-<version>.tar.xz` of that release). CI, the
-  release image and `scripts/azahar-source.sh` read them from there. golangci-lint, goreleaser and actionlint in the defaults of
+  release image and `scripts/azahar-source.sh` read them from there. After
+  a bump, recompute the system libraries of `packaging/image/Dockerfile`
+  (NOTES.md Phase 8a) and the Qt version in `packaging/image/NOTICE.md`.
+- golangci-lint, goreleaser and actionlint: defaults of
   `.devcontainer/install-go-tools.sh` (used by the image and CI), plus the
   `version:` inputs in the workflows; Renovate keeps them in sync.
 - `.devcontainer/install-azahar.sh` extracts the AppImage with `unsquashfs`

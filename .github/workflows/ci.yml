@@ -162,8 +162,7 @@ jobs:
           test -n "$image"
           echo "image: $image"
           docker run --rm "$image" version
-          chmod a+rwx fixture
-          docker run --rm -v "$PWD/fixture:/work" --entrypoint sh "$image" -euc '
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/fixture:/work" --entrypoint sh "$image" -euc '
             mcp-azahar launch fixture.3dsx --elf fixture.elf
             mcp-azahar wait-for test_state.mode MODE_RUN --timeout 60s
             mcp-azahar press A

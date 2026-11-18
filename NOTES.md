@@ -110,6 +110,13 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - buildx: the release job creates a `docker-container` builder (SBOM
   attestations need it) and logs in to ghcr with `GITHUB_TOKEN`
   (`packages: write`) with plain docker commands, no extra actions.
+- Review of #17: a host uid other than 1000 could not write to a
+  mounted `/work`, and `--user` left `HOME=/` (no state dir); the image
+  now sets `HOME=/tmp` and `MCP_AZAHAR_STATE_DIR=/tmp/mcp-azahar`, and CI
+  runs it with `--user "$(id -u):$(id -g)"`. Bundled Qt is 6.8.2
+  (`strings libQt6Core.so.6`); NOTICE.md names it and its source. The
+  source tarball is attached before goreleaser pushes the image (it pushes
+  images before release assets). New ghcr packages start private.
 - No container runtime in the Coder workspace: the image is only built
   and tested in CI (job `image`: snapshot build, then the fixture is
   launched inside the image, and `tools/list` over `docker run -i`).

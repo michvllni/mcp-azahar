@@ -56,7 +56,7 @@ fi
 
 mkdir -p "$out"
 tarball="$out/azahar-unified-source-$version.tar.xz"
-curl -fsSL -o "$tarball" "https://github.com/azahar-emu/azahar/releases/download/$version/azahar-unified-source-$version.tar.xz"
+curl -fsSL --retry 3 -o "$tarball" "https://github.com/azahar-emu/azahar/releases/download/$version/azahar-unified-source-$version.tar.xz"
 echo "$sha  $tarball" | sha256sum -c - >&2
 tar -xJf "$tarball" -O "azahar-unified-source-$version/LICENSE.txt" > "$out/azahar-LICENSE.txt"
 if $license_only; then

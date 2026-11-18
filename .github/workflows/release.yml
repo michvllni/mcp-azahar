@@ -52,6 +52,10 @@ jobs:
           echo "AZAHAR_VERSION=$(sed -n 's/^ARG AZAHAR_VERSION=//p' .devcontainer/Dockerfile)" >> "$GITHUB_ENV"
           echo "AZAHAR_SHA256=$(sed -n 's/^ARG AZAHAR_SHA256=//p' .devcontainer/Dockerfile)" >> "$GITHUB_ENV"
           scripts/azahar-source.sh
+      - name: Attach Azahar's source tarball first (GPL; before any image is pushed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" .release/azahar-source/azahar-unified-source-*.tar.xz --clobber
       - name: buildx builder (needed for the SBOM attestation) and ghcr login
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
