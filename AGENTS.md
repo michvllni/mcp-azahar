@@ -120,7 +120,9 @@ goreleaser check && goreleaser build --snapshot --clean
 - Jobs `fixture` (builds `testdata/fixture` in the pinned
   `devkitpro/devkitarm` image, uploads it as artifact `fixture`) and
   `integration` (Debian trixie container, Azahar via
-  `install-azahar.sh`, runs `TestFixture` and `TestLiveLaunch`).
+  `install-azahar.sh`, runs `TestFixture` and `TestLiveLaunch` with
+  `-p 1`: live tests of different packages must not run in parallel,
+  there is only one RPC port per host).
 
 ## Conventions
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
