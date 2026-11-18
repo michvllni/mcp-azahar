@@ -11,7 +11,8 @@
 #   *.yaml, *.json, *.json5 and Dockerfile and fails if any of them lacks the
 #   line "SPDX-License-Identifier: GPL-3.0-or-later" within its first 5 lines.
 #   package.json cannot hold comments: it must declare
-#   "license": "GPL-3.0-or-later" instead.
+#   "license": "GPL-3.0-or-later" instead. The root server.json (MCP Registry
+#   entry, strict JSON with a fixed schema) is exempt.
 #   Run from anywhere inside the repository.
 #
 # OPTIONS
@@ -35,7 +36,9 @@ esac
 cd "$(git rev-parse --show-toplevel)"
 missing=0
 while IFS= read -r -d '' f; do
-  if [ "$(basename "$f")" = package.json ]; then
+  if [ "$f" = server.json ]; then
+    continue
+  elif [ "$(basename "$f")" = package.json ]; then
     if ! grep -q '"license": "GPL-3.0-or-later"' "$f"; then
       echo "missing \"license\": \"GPL-3.0-or-later\": $f" >&2
       missing=1

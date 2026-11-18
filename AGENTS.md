@@ -37,7 +37,8 @@ scripts/             check-version.sh (tag vs. version), check-spdx.sh,
                      build-testdata.sh (rebuilds the committed test ELFs),
                      azahar-source.sh (Azahar source tarball + license),
                      npm-packages.sh (build/publish the npm packages),
-                     npm-bootstrap.sh (one-time npm trust setup)
+                     npm-bootstrap.sh (one-time npm trust setup),
+                     server-json.sh, install-mcp-publisher.sh (MCP Registry)
 packaging/image/     release container image (Dockerfile, NOTICE.md),
                      built by goreleaser dockers_v2
 packaging/npm/       npm wrapper package mcp-azahar (bin/mcp-azahar.js runs
@@ -49,6 +50,7 @@ packaging/npm/       npm wrapper package mcp-azahar (bin/mcp-azahar.js runs
 docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 testdata/fixture/    libctru test homebrew (main.c, build.sh) and smoke.yaml
+server.json          MCP Registry entry template (version set at release)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
 
@@ -136,6 +138,17 @@ goreleaser check && goreleaser build --snapshot --clean
   The `checks` CI job builds the packages, dry-runs the publish, installs
   the wrapper and runs it. `repository.url` must stay
   `git+https://github.com/michvllni/mcp-azahar.git` (npm checks it).
+- MCP Registry: job `registry` runs last and only for non-pre-releases:
+  `scripts/server-json.sh` renders `server.json` (root template; name
+  `io.github.michvllni/mcp-azahar`, description at most 100 characters)
+  with the version, the npm version and the image tag, then
+  `mcp-publisher login github-oidc` and `publish`. mcp-publisher is
+  installed by `scripts/install-mcp-publisher.sh` (pinned, Sigstore
+  bundle verified with cosign). The registry checks `mcpName` in the npm
+  package and the image label `io.modelcontextprotocol.server.name`, so
+  both must keep that name. First release: the ghcr package is private,
+  so this job fails until the package is public; then re-run it. CI runs
+  `mcp-publisher validate` on the rendered file.
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
   then create a GitHub release on `main` with a new tag `v<version>` and
   publish it. Do not push tags by hand. Only the maintainer releases. If
@@ -157,7 +170,8 @@ goreleaser check && goreleaser build --snapshot --clean
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
   (or the equivalent comment syntax; `*.go *.sh *.c *.js *.yml *.yaml
   *.json *.json5 Dockerfile` are enforced by `scripts/check-spdx.sh` in
-  CI; `package.json` declares `"license": "GPL-3.0-or-later"` instead). Code ported
+  CI; `package.json` declares `"license": "GPL-3.0-or-later"` instead, and
+  the strict-JSON `server.json` is exempt). Code ported
   from Azahar keeps its copyright notice plus a comment naming the source
   file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI

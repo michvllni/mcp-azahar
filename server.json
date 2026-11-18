@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.michvllni/mcp-azahar",
+  "title": "Azahar 3DS emulator",
+  "description": "Test 3DS homebrew in the Azahar emulator: input, screenshots, memory, symbols, save states",
+  "repository": {
+    "url": "https://github.com/michvllni/mcp-azahar",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "mcp-azahar",
+      "version": "0.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/michvllni/mcp-azahar:0.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

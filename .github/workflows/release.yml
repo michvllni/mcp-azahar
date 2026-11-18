@@ -86,3 +86,30 @@ jobs:
         run: |
           npm --version
           scripts/npm-packages.sh -v "${GITHUB_REF_NAME#v}" -p
+
+  registry:
+    name: MCP Registry
+    # Last (D10): the registry checks that the npm package and the image
+    # exist and name this server. Pre-releases stay off the registry. On the
+    # first release the new ghcr package is private: make it public, then
+    # re-run this job ("Re-run failed jobs").
+    needs: release
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # mcp-publisher login github-oidc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install mcp-publisher (pinned, signature verified)
+        run: |
+          scripts/install-mcp-publisher.sh -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Publish server.json for this version
+        run: |
+          scripts/server-json.sh -v "${GITHUB_REF_NAME#v}" -o "$RUNNER_TEMP/registry/server.json"
+          cd "$RUNNER_TEMP/registry"
+          mcp-publisher login github-oidc
+          mcp-publisher publish
