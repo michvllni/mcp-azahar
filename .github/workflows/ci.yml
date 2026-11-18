@@ -70,6 +70,21 @@ jobs:
         run: goreleaser check
       - name: goreleaser snapshot build (all platforms)
         run: goreleaser build --snapshot --clean
+      - name: npm packages (built from the snapshot binaries, publish dry run, installed and run)
+        run: |
+          scripts/npm-packages.sh -v 0.0.0-ci -p -n
+          mkdir -p "$RUNNER_TEMP/npm/tgz" "$RUNNER_TEMP/npm/proj"
+          for d in dist/npm/*; do (cd "$d" && npm pack --silent --pack-destination "$RUNNER_TEMP/npm/tgz"); done
+          cd "$RUNNER_TEMP/npm/proj"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund ../tgz/mcp-azahar-linux-x64-0.0.0-ci.tgz ../tgz/mcp-azahar-0.0.0-ci.tgz
+          ./node_modules/.bin/mcp-azahar version
+          { printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 3; } \
+            | ./node_modules/.bin/mcp-azahar | tee mcp.out
+          grep -q azahar_screenshot mcp.out
 
   fixture:
     name: Build test fixture

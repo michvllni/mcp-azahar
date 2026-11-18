@@ -239,9 +239,15 @@ all built by the release workflow (PLAN.md Phase 8):
   published last, after npm and the image, with GitHub OIDC
   (`id-token: write`): `mcp-publisher` as the final workflow step, or
   goreleaser's `mcp` section if its order allows it.
-- **npm:** goreleaser OSS has no npm publishing, so a separate workflow
-  step publishes the wrapper and the platform packages, with provenance
-  (trusted publishing per package; the first publish may need a token).
+- **npm:** goreleaser OSS has no npm publishing, so a workflow step
+  (`scripts/npm-packages.sh`) publishes the platform packages, then the
+  wrapper, with **trusted publishing** (OIDC from `release.yml`, automatic
+  provenance, no token; maintainer, 2026-11-18). npm can only configure
+  trust for an existing package, so the maintainer runs
+  `scripts/npm-bootstrap.sh` once, shortly before the first release: it
+  publishes a deprecated placeholder `0.0.0-bootstrap` per package and
+  runs `npm trust github` for each (a new trust configuration expires
+  unless used within 2 days).
 - **GPL compliance:** Azahar's binary is GPL-3.0 (LICENSE.txt). Each
   image release ships Azahar's Corresponding Source by attaching the
   matching `azahar-unified-source-<version>.tar.xz` (published by Azahar,

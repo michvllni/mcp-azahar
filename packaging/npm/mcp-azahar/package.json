@@ -1,0 +1,29 @@
+{
+  "name": "mcp-azahar",
+  "version": "0.0.0",
+  "description": "Unofficial MCP server and CLI for the Azahar 3DS emulator: automate testing of 3DS homebrew",
+  "keywords": ["mcp", "model-context-protocol", "azahar", "3ds", "emulator", "homebrew", "testing"],
+  "homepage": "https://github.com/michvllni/mcp-azahar#readme",
+  "bugs": "https://github.com/michvllni/mcp-azahar/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michvllni/mcp-azahar.git"
+  },
+  "license": "GPL-3.0-or-later",
+  "mcpName": "io.github.michvllni/mcp-azahar",
+  "bin": {
+    "mcp-azahar": "bin/mcp-azahar.js"
+  },
+  "files": ["bin/", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "mcp-azahar-linux-x64": "0.0.0",
+    "mcp-azahar-linux-arm64": "0.0.0",
+    "mcp-azahar-darwin-x64": "0.0.0",
+    "mcp-azahar-darwin-arm64": "0.0.0",
+    "mcp-azahar-win32-x64": "0.0.0",
+    "mcp-azahar-win32-arm64": "0.0.0"
+  }
+}

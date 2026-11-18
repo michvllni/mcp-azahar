@@ -37,5 +37,11 @@
       matchDepNames: ['golangci/golangci-lint', 'goreleaser/goreleaser', 'rhysd/actionlint'],
       semanticCommitType: 'build',
     },
+    {
+      // The npm wrapper's optionalDependencies are our own platform
+      // packages, versioned by scripts/npm-packages.sh at release time.
+      matchFileNames: ['packaging/npm/**'],
+      enabled: false,
+    },
   ],
 }

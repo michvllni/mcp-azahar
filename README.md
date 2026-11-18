@@ -45,6 +45,11 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
   use `docker exec`. Do not publish UDP port 45987 (`-p`) or use
   `--network host`: Azahar's RPC server is unauthenticated. Run one container
   per parallel session.
+- **npm** (Linux, macOS, Windows; x64 and arm64; needs Node 18+):
+  `npx -y mcp-azahar` starts the MCP server (no arguments means `serve`), and
+  `npx -y mcp-azahar <command>` runs the CLI. MCP client configuration:
+  `{"command": "npx", "args": ["-y", "mcp-azahar"]}`. You still need Azahar
+  (and Xvfb for headless `launch`) on the host.
 - **Release binaries**: archives for Linux, macOS and Windows (amd64, arm64)
   on the [releases page](https://github.com/michvllni/mcp-azahar/releases).
 - **Go**: `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.

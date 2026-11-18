@@ -7,9 +7,11 @@
 #   check-spdx.sh [-h]
 #
 # DESCRIPTION
-#   Lists tracked files (git ls-files) of type *.go, *.sh, *.c, *.yml, *.yaml,
-#   *.json, *.json5 and Dockerfile and fails if any of them lacks the line
-#   "SPDX-License-Identifier: GPL-3.0-or-later" within its first 5 lines.
+#   Lists tracked files (git ls-files) of type *.go, *.sh, *.c, *.js, *.yml,
+#   *.yaml, *.json, *.json5 and Dockerfile and fails if any of them lacks the
+#   line "SPDX-License-Identifier: GPL-3.0-or-later" within its first 5 lines.
+#   package.json cannot hold comments: it must declare
+#   "license": "GPL-3.0-or-later" instead.
 #   Run from anywhere inside the repository.
 #
 # OPTIONS
@@ -33,11 +35,16 @@ esac
 cd "$(git rev-parse --show-toplevel)"
 missing=0
 while IFS= read -r -d '' f; do
-  if ! head -n 5 "$f" | grep -q 'SPDX-License-Identifier: GPL-3.0-or-later'; then
+  if [ "$(basename "$f")" = package.json ]; then
+    if ! grep -q '"license": "GPL-3.0-or-later"' "$f"; then
+      echo "missing \"license\": \"GPL-3.0-or-later\": $f" >&2
+      missing=1
+    fi
+  elif ! head -n 5 "$f" | grep -q 'SPDX-License-Identifier: GPL-3.0-or-later'; then
     echo "missing SPDX header: $f" >&2
     missing=1
   fi
-done < <(git ls-files -z -- '*.go' '*.sh' '*.c' '*.yml' '*.yaml' '*.json' '*.json5' '*Dockerfile')
+done < <(git ls-files -z -- '*.go' '*.sh' '*.c' '*.js' '*.yml' '*.yaml' '*.json' '*.json5' '*Dockerfile')
 
 [ "$missing" -eq 0 ] && echo "ok: all source files have SPDX headers"
 exit "$missing"
