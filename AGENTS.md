@@ -94,10 +94,14 @@ goreleaser check && goreleaser build --snapshot --clean
   and MCP.
 - `internal/rpc` mirrors `docs/PROTOCOL.md`: comments cite its sections.
   Behavior Azahar shows must be reproduced in `internal/rpc/fakeserver`
-  (empty replies, dropped datagrams, LoadState restart), so unit tests catch
-  client mistakes without an emulator.
+  (empty replies, dropped datagrams, LoadState closing and re-binding the
+  port, empty save slots being accepted), so unit tests catch client
+  mistakes without an emulator.
 - Only idempotent RPC requests are resent; TakeScreenshot, SaveState and
-  LoadState never are (`RequestType.Idempotent`).
+  LoadState never are (`RequestType.Idempotent`). "Connection refused"
+  counts as a lost attempt (the port is closed while Azahar restarts RPC).
+- A failed LoadState leaves Azahar stopped behind a modal dialog that
+  blocks all RPC: check the state file exists before calling LoadState.
 - Never guess the Azahar RPC wire format: `docs/PROTOCOL.md` is the
   contract, derived from Azahar source with `path:line` references at a
   pinned commit. When bumping Azahar, re-check it against the new source.

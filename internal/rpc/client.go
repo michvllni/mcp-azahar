@@ -24,9 +24,16 @@ var (
 	// expected: invalid arguments, wrong protocol version, or a selected
 	// process that no longer exists (PROTOCOL.md §4).
 	ErrRejected = errors.New("rpc: request rejected by Azahar")
-	// ErrNotAccepted means a save or load state request was refused: no app
-	// running or invalid slot.
+	// ErrNotAccepted means Azahar refused a save or load state request: no
+	// app running, or another save/load is still pending (PROTOCOL.md §5.7).
+	// An empty slot is accepted; see ErrStateNotLoaded.
 	ErrNotAccepted = errors.New("rpc: save state request not accepted")
+	// ErrStateNotLoaded means Azahar accepted LoadState but did not reload:
+	// the slot is empty, the state is from another app or Azahar build, or
+	// loading failed. Azahar then stops emulation behind a modal error
+	// dialog and answers no RPC requests until someone dismisses it
+	// (PROTOCOL.md §5.7). Check that the state file exists before loading.
+	ErrStateNotLoaded = errors.New("rpc: save state was not loaded")
 	// ErrWriteNotApplied means a verified write read back different data,
 	// e.g. because the address is outside the writable regions
 	// (PROTOCOL.md §5.2).
@@ -67,8 +74,8 @@ type Options struct {
 	ScreenshotTimeout time.Duration
 	// StateTimeout for SaveState/LoadState, never resent (default 20 s).
 	StateTimeout time.Duration
-	// ReloadTimeout bounds the wait for the RPC server restart after a
-	// LoadState when a process is selected (default 15 s).
+	// ReloadTimeout bounds the wait for the RPC server restart that shows a
+	// LoadState took effect (default 15 s).
 	ReloadTimeout time.Duration
 	// PollInterval between checks while waiting for that restart (default 100 ms).
 	PollInterval time.Duration
@@ -96,8 +103,12 @@ func (o Options) withDefaults() Options {
 
 // Client talks to one Azahar RPC server. It is safe for concurrent use;
 // requests are sent one at a time, as Azahar processes them in order anyway.
+// Screenshot and LoadState span several requests and exclude each other,
+// so concurrent screenshots cannot replace each other's image data. Other
+// clients of the same Azahar are not coordinated (DECISIONS.md D9).
 type Client struct {
-	mu       sync.Mutex
+	opMu     sync.Mutex // multi-request operations
+	mu       sync.Mutex // one request at a time
 	conn     net.Conn
 	opts     Options
 	nextID   uint32
@@ -118,6 +129,14 @@ func Dial(ctx context.Context, dialer Dialer, opts Options) (*Client, error) {
 
 // New wraps an open connection. The client owns conn and closes it in Close.
 func New(conn net.Conn, opts Options) *Client {
+	// PROTOCOL.md §2: room for full-size datagrams in both directions.
+	if b, ok := conn.(interface {
+		SetReadBuffer(int) error
+		SetWriteBuffer(int) error
+	}); ok {
+		_ = b.SetReadBuffer(2 * MaxPacketSize)
+		_ = b.SetWriteBuffer(2 * MaxPacketSize)
+	}
 	return &Client{
 		conn:     conn,
 		opts:     opts.withDefaults(),
@@ -139,7 +158,9 @@ func (c *Client) Close() error {
 }
 
 // do sends one request and waits for the matching reply. attempts > 1
-// resends after a per-attempt timeout. The returned data is a copy.
+// resends after a lost attempt: no reply within timeout, or "connection
+// refused" (nothing listens on the port, e.g. while Azahar recreates its
+// RPC server during LoadState, PROTOCOL.md §1). The returned data is a copy.
 func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout time.Duration, attempts int) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -156,24 +177,53 @@ func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout tim
 		return nil, err
 	}
 
-	// Unblock a pending Read when ctx ends.
-	stop := context.AfterFunc(ctx, func() { _ = c.conn.SetReadDeadline(time.Now()) })
-	defer stop()
+	// Unblock a pending Read when ctx ends. The callback must not outlive
+	// this request: a late SetReadDeadline would cut the next one short.
+	fired := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = c.conn.SetReadDeadline(time.Now())
+		close(fired)
+	})
+	defer func() {
+		if !stop() {
+			<-fired
+		}
+	}()
 
+	refused := false
 	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 && refused {
+			// Give a restarting server a moment instead of burning retries.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(min(timeout/4, 100*time.Millisecond)):
+			}
+		}
 		if _, err := c.conn.Write(pkt); err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			if isRefused(err) {
+				refused = true
+				continue
+			}
 			return nil, fmt.Errorf("rpc: send %v: %w", t, err)
 		}
 		deadline := time.Now().Add(timeout)
-		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-			deadline = d
+		ctxDeadline, hasCtxDeadline := ctx.Deadline()
+		limitedByCtx := hasCtxDeadline && !ctxDeadline.After(deadline)
+		if limitedByCtx {
+			deadline = ctxDeadline
 		}
 		if err := c.conn.SetReadDeadline(deadline); err != nil {
 			return nil, fmt.Errorf("rpc: %w", err)
 		}
+		// A cancel that fired before this point was overwritten above.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	read:
 		for {
 			n, err := c.conn.Read(c.buf)
 			if err != nil {
@@ -181,8 +231,16 @@ func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout tim
 					return nil, ctx.Err()
 				}
 				var ne net.Error
-				if errors.As(err, &ne) && ne.Timeout() {
-					break // next attempt
+				switch {
+				case errors.As(err, &ne) && ne.Timeout():
+					if limitedByCtx {
+						// The caller's deadline, not the attempt's, expired.
+						return nil, context.DeadlineExceeded
+					}
+					break read
+				case isRefused(err):
+					refused = true
+					break read
 				}
 				return nil, fmt.Errorf("rpc: receive %v: %w", t, err)
 			}
@@ -192,6 +250,10 @@ func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout tim
 			}
 			return bytes.Clone(reply), nil
 		}
+	}
+	if refused {
+		return nil, fmt.Errorf("%w: %v: connection refused, nothing listens on the RPC port "+
+			"(is an app loaded with the RPC server enabled?)", ErrTimeout, t)
 	}
 	return nil, fmt.Errorf("%w: %v after %d attempt(s) of %v", ErrTimeout, t, attempts, timeout)
 }
@@ -309,13 +371,19 @@ func (c *Client) Process(ctx context.Context) (uint32, error) {
 // The selection is server state shared by all clients, and is reset when
 // a save state is loaded; LoadState restores it (PROTOCOL.md §5.4).
 func (c *Client) SelectProcess(ctx context.Context, pid uint32) error {
-	if _, err := c.request(ctx, TypeSetGetProcess, args2(1, pid)); err != nil {
+	if err := c.setProcess(ctx, pid); err != nil {
 		return err
 	}
 	c.mu.Lock()
 	c.selected = pid
 	c.mu.Unlock()
 	return nil
+}
+
+// setProcess sets the server's selection without recording it.
+func (c *Client) setProcess(ctx context.Context, pid uint32) error {
+	_, err := c.request(ctx, TypeSetGetProcess, args2(1, pid))
+	return err
 }
 
 // Screen selects a 3DS screen for screenshots.
@@ -364,6 +432,8 @@ type Image struct {
 // Screenshot captures the next rendered frame (PROTOCOL.md §5.5). The
 // image size depends on Azahar's layout setting and the scale.
 func (c *Client) Screenshot(ctx context.Context, req ScreenshotRequest) (*Image, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
 	if req.Scale < 0 || req.Scale > MaxScreenshotScale {
 		return nil, fmt.Errorf("rpc: screenshot scale %d outside 0..%d", req.Scale, MaxScreenshotScale)
 	}
@@ -385,8 +455,14 @@ func (c *Client) Screenshot(ctx context.Context, req ScreenshotRequest) (*Image,
 	if info.Result != ScreenshotSuccess {
 		return nil, &ScreenshotError{Result: info.Result}
 	}
-	if req.Raw && uint64(info.DataSize) != uint64(info.Width)*uint64(info.Height)*3 {
+	pixels := uint64(info.Width) * uint64(info.Height)
+	if req.Raw && uint64(info.DataSize) != pixels*3 {
 		return nil, fmt.Errorf("rpc: raw screenshot %dx%d has %d bytes", info.Width, info.Height, info.DataSize)
+	}
+	// The reply is unauthenticated: bound the allocation. A PNG of RGB8
+	// pixels is not much larger than the raw data.
+	if pixels > maxScreenshotPixels || uint64(info.DataSize) > pixels*3+1<<20 {
+		return nil, fmt.Errorf("rpc: implausible screenshot %dx%d with %d bytes", info.Width, info.Height, info.DataSize)
 	}
 	data := make([]byte, 0, info.DataSize)
 	for uint32(len(data)) < info.DataSize {
@@ -410,6 +486,10 @@ func (c *Client) Screenshot(ctx context.Context, req ScreenshotRequest) (*Image,
 	}
 	return &Image{Width: int(info.Width), Height: int(info.Height), Format: format, Data: data}, nil
 }
+
+// maxScreenshotPixels bounds screenshot dimensions: the largest layouts at
+// MaxScreenshotScale stay far below it.
+const maxScreenshotPixels = 1 << 26
 
 // PerfStats returns the emulator's performance statistics. With reset, the
 // statistics cover the time since the previous reset and a new interval
@@ -441,7 +521,8 @@ func (c *Client) state(ctx context.Context, t RequestType, slot int) error {
 		return fmt.Errorf("%w: %v", ErrRejected, t)
 	}
 	if binary.LittleEndian.Uint32(reply) == 0 {
-		return fmt.Errorf("%w: %v slot %d (no app running?)", ErrNotAccepted, t, slot)
+		return fmt.Errorf("%w: %v slot %d (no app running, or another save/load still pending)",
+			ErrNotAccepted, t, slot)
 	}
 	return nil
 }
@@ -452,44 +533,69 @@ func (c *Client) SaveState(ctx context.Context, slot int) error {
 	return c.state(ctx, TypeSaveState, slot)
 }
 
-// LoadState requests loading the save state in slot 0..10. Loading
-// recreates Azahar's RPC server, which resets the selected process. If a
-// process was selected through this client, LoadState waits for that
-// restart (up to Options.ReloadTimeout) and selects the process again;
-// otherwise it returns once the request is accepted and the load completes
-// asynchronously (PROTOCOL.md §1, §5.7).
+// loadMarker is selected while a LoadState is pending: Azahar resets the
+// selection when it recreates its RPC server, which makes the reload
+// observable even if no process was selected. It is never a real PID.
+const loadMarker = 0xFFFFFFFE
+
+// LoadState loads the save state in slot 0..10 and returns once Azahar has
+// reloaded. Loading recreates Azahar's RPC server (PROTOCOL.md §1, §5.7):
+// LoadState waits for that restart, up to Options.ReloadTimeout, then
+// restores the process selection. Azahar accepts a load from an empty or
+// incompatible slot and only fails afterwards; LoadState then returns
+// ErrStateNotLoaded. Memory requests sent concurrently during a LoadState
+// fail with ErrRejected.
 func (c *Client) LoadState(ctx context.Context, slot int) error {
-	if err := c.state(ctx, TypeLoadState, slot); err != nil {
+	if slot < 0 || slot >= SaveStateSlots {
+		return fmt.Errorf("rpc: save state slot %d outside 0..%d", slot, SaveStateSlots-1)
+	}
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	c.mu.Lock()
+	restore := c.selected
+	c.mu.Unlock()
+
+	if err := c.setProcess(ctx, loadMarker); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	pid := c.selected
-	c.mu.Unlock()
-	if pid == NoProcess {
-		return nil
+	if err := c.state(ctx, TypeLoadState, slot); err != nil {
+		_ = c.setProcess(context.WithoutCancel(ctx), restore)
+		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.opts.ReloadTimeout)
+
+	wait, cancel := context.WithTimeout(ctx, c.opts.ReloadTimeout)
 	defer cancel()
 	probe := min(c.opts.Timeout, 500*time.Millisecond)
 	for {
-		// A request may be lost while the server restarts: one short attempt.
-		reply, err := c.do(ctx, TypeSetGetProcess, args2(0, 0), probe, 1)
+		// One short attempt: requests are lost or refused while the server
+		// restarts.
+		reply, err := c.do(wait, TypeSetGetProcess, args2(0, 0), probe, 1)
 		switch {
-		case err == nil && len(reply) >= 4 && binary.LittleEndian.Uint32(reply) != pid:
-			return c.SelectProcess(context.WithoutCancel(ctx), pid)
-		case err != nil && !errors.Is(err, ErrTimeout):
-			if errors.Is(err, context.DeadlineExceeded) {
-				return fmt.Errorf("%w: RPC server did not restart within %v after LoadState",
-					ErrTimeout, c.opts.ReloadTimeout)
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case err == nil && len(reply) >= 4 && binary.LittleEndian.Uint32(reply) != loadMarker:
+			if restore == NoProcess {
+				return nil // the restarted server has no selection either
 			}
+			return c.setProcess(ctx, restore)
+		case err != nil && !errors.Is(err, ErrTimeout) && wait.Err() == nil:
 			return err
 		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%w: RPC server did not restart within %v after LoadState",
-				ErrTimeout, c.opts.ReloadTimeout)
-		case <-time.After(c.opts.PollInterval):
+		if wait.Err() == nil {
+			select {
+			case <-wait.Done():
+			case <-time.After(c.opts.PollInterval):
+				continue
+			}
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		_ = c.setProcess(context.WithoutCancel(ctx), restore)
+		return fmt.Errorf("%w: slot %d: Azahar accepted the request but did not reload within %v; "+
+			"the slot may be empty or from another app or Azahar build. Azahar is now stopped "+
+			"behind a modal error dialog and answers no RPC until it is dismissed (see its log)",
+			ErrStateNotLoaded, slot, c.opts.ReloadTimeout)
 	}
 }
 

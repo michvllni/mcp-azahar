@@ -10,10 +10,10 @@ at the top of each section.
 - Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. D4 decided
   (RPC screenshots). Parallel sessions/RPC isolation is deferred until
   before Phase 3 (see "Open questions").
-- Phase 2 (RPC client `internal/rpc`): done. Unit tests against
-  `internal/rpc/fakeserver` (88 % coverage), and a live test
-  (`-tags integration`) passed against Azahar 2127.0-rc3. Next: Phase 3,
-  after the parallel-sessions decision.
+- Phase 2 (RPC client `internal/rpc`): done, reviewed (PR #7 review
+  findings fixed). Unit tests against `internal/rpc/fakeserver`, and a live
+  test (`-tags integration`) passed against Azahar 2127.0-rc3. Next:
+  Phase 3.
 
 ## Blockers
 
@@ -78,12 +78,25 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   can plug in later), requests serialized with a mutex, random starting
   request ID, replies matched by version+ID+type, per-attempt timeout
   (default 2 s) with 3 resends for idempotent requests only, context
-  cancellation interrupts a blocking read via `context.AfterFunc`.
+  cancellation interrupts a blocking read via `context.AfterFunc` (the
+  callback is awaited before the next request, so a late cancel cannot cut
+  it short). "Connection refused" (ICMP) counts as a lost attempt.
+- Screenshot and LoadState take a client-wide operation lock, so two
+  goroutines cannot interleave TakeScreenshot/ReadScreenshot and tear an
+  image. Other clients of the same Azahar are not coordinated (D9).
 - `WriteMemoryVerified` reads back, because Azahar never reports refused
   writes. Live-confirmed for `0x1FF80000`.
-- `LoadState` with a selected process waits until `GetProcess` no longer
-  returns it (server recreated), then selects it again. Live: 0.83 s for
-  the minimal 3DSX, including one lost request.
+- `LoadState` selects a marker PID (`0xFFFFFFFE`) before loading and waits
+  until `GetProcess` no longer returns it (the recreated server has no
+  selection), then restores the previous selection. This works with or
+  without a selected process and detects loads that never happen. Live:
+  0.87 s for the minimal 3DSX, through the closed-port window.
+- Live, empty save slot: Azahar accepts the load, then stops emulation
+  behind a modal "Save/load Error" dialog; until it is dismissed, **RPC
+  answers nothing** (sync mode). The client returns `ErrStateNotLoaded`
+  after `ReloadTimeout`. Phase 3 must check the state file exists before
+  loading, and may need to detect such dialogs (window title via X) to
+  report a stuck session.
 - The live test passed against the 2127.0-rc3 AppImage with the Phase 1
   research 3DSX (scratch address `0x101000`).
 
@@ -205,9 +218,8 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   upstream change. Proposal: (a), with (b) as fallback where namespaces are
   unavailable. To verify: GitHub's Ubuntu 24.04 runners restrict
   unprivileged user namespaces via AppArmor.
-- Not verified yet: whether RPC requests are processed while emulation is
-  paused, whether the SetInput override survives LoadState, how long a load
-  takes.
+- Not verified yet: whether the SetInput override survives LoadState;
+  whether a user pause (not just an error dialog) also blocks RPC.
 - Does the Coder template build from this repo's `.devcontainer/`, or must
   the template be updated separately for trixie?
 - Renovate GitHub app must be installed on the repo by the maintainer.

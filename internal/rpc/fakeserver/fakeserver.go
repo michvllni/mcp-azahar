@@ -43,16 +43,23 @@ type Config struct {
 	// NotRunning makes save/load state requests fail as with no app loaded.
 	NotRunning bool
 	// NoRestartOnLoad applies LoadState immediately without recreating the
-	// server (selection kept, no request lost), unlike Azahar.
+	// server (selection kept, port stays open), unlike Azahar.
 	NoRestartOnLoad bool
-	Screens         ScreenSource
+	// RestartDelay is the time between accepting LoadState and closing the
+	// socket (default 20 ms); RestartGap how long the port stays closed, so
+	// requests are refused (default 50 ms). Azahar does the same when it
+	// recreates its RPC server (PROTOCOL.md §1).
+	RestartDelay, RestartGap time.Duration
+	Screens                  ScreenSource
 }
 
 // Server is a fake RPC server listening on 127.0.0.1 (random port).
 type Server struct {
-	conn net.PacketConn
-	done chan struct{}
-	wg   sync.WaitGroup
+	connMu sync.Mutex
+	conn   net.PacketConn // replaced on restart
+	addr   string
+	done   chan struct{}
+	wg     sync.WaitGroup
 
 	mu         sync.Mutex
 	cfg        Config
@@ -68,7 +75,7 @@ type Server struct {
 	shotBusy   bool
 	shotData   []byte
 	states     map[uint32]map[uint32][]byte
-	reloadPend map[uint32][]byte // memory to restore on the next request
+	restarts   int
 }
 
 // New starts a fake server.
@@ -79,6 +86,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Screens == nil {
 		cfg.Screens = SolidScreens
 	}
+	if cfg.RestartDelay <= 0 {
+		cfg.RestartDelay = 20 * time.Millisecond
+	}
+	if cfg.RestartGap <= 0 {
+		cfg.RestartGap = 50 * time.Millisecond
+	}
 	var lc net.ListenConfig
 	conn, err := lc.ListenPacket(context.Background(), "udp", "127.0.0.1:0")
 	if err != nil {
@@ -86,6 +99,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{
 		conn:     conn,
+		addr:     conn.LocalAddr().String(),
 		done:     make(chan struct{}),
 		cfg:      cfg,
 		mem:      map[uint32][]byte{},
@@ -93,7 +107,7 @@ func New(cfg Config) (*Server, error) {
 		states:   map[uint32]map[uint32][]byte{},
 	}
 	s.wg.Add(1)
-	go s.serve()
+	go s.serve(conn)
 	return s, nil
 }
 
@@ -109,15 +123,72 @@ func SolidScreens(secondary bool, scale int) (int, int, []byte) {
 	return w, h, bytes.Repeat(c[:], w*h)
 }
 
-// Addr returns the "host:port" the server listens on.
-func (s *Server) Addr() string { return s.conn.LocalAddr().String() }
+// Addr returns the "host:port" the server listens on (stable across
+// restarts).
+func (s *Server) Addr() string { return s.addr }
+
+// Restarts returns how often the server was recreated by LoadState.
+func (s *Server) Restarts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.restarts
+}
 
 // Close stops the server.
 func (s *Server) Close() error {
 	close(s.done)
-	err := s.conn.Close()
+	s.connMu.Lock()
+	var err error
+	if s.conn != nil {
+		err = s.conn.Close()
+		s.conn = nil
+	}
+	s.connMu.Unlock()
 	s.wg.Wait()
 	return err
+}
+
+func (s *Server) currentConn() net.PacketConn {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return s.conn
+}
+
+// restart mimics Azahar recreating its RPC server after a LoadState: the
+// socket closes, the port is closed for RestartGap, the state is restored
+// and the selection reset, then the same port is bound again.
+func (s *Server) restart(state map[uint32][]byte) {
+	defer s.wg.Done()
+	select {
+	case <-time.After(s.cfg.RestartDelay):
+	case <-s.done:
+		return
+	}
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.conn == nil {
+		return // closed
+	}
+	_ = s.conn.Close()
+	s.conn = nil
+	select {
+	case <-time.After(s.cfg.RestartGap):
+	case <-s.done:
+		return
+	}
+	s.mu.Lock()
+	s.mem = state
+	s.selected = rpc.NoProcess
+	s.restarts++
+	s.mu.Unlock()
+	var lc net.ListenConfig
+	conn, err := lc.ListenPacket(context.Background(), "udp", s.addr)
+	if err != nil {
+		return // port taken meanwhile: the server stays down, like Azahar
+	}
+	s.conn = conn
+	s.wg.Add(1)
+	go s.serve(conn)
 }
 
 // SetMemory stores data at addr, bypassing the writable-region check.
@@ -204,28 +275,23 @@ func (s *Server) SetScreenshotDelay(d time.Duration) {
 	s.shotDelay = d
 }
 
-func (s *Server) serve() {
+func (s *Server) serve(conn net.PacketConn) {
 	defer s.wg.Done()
 	buf := make([]byte, rpc.MaxPacketSize+1)
 	for {
-		n, addr, err := s.conn.ReadFrom(buf)
+		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
-			select {
-			case <-s.done:
-				return
-			default:
-			}
 			if errors.Is(err, net.ErrClosed) {
-				return
+				return // closed or restarting
 			}
 			continue
 		}
 		pkt := bytes.Clone(buf[:n])
-		s.handle(pkt, addr)
+		s.handle(conn, pkt, addr)
 	}
 }
 
-func (s *Server) handle(pkt []byte, addr net.Addr) {
+func (s *Server) handle(conn net.PacketConn, pkt []byte, addr net.Addr) {
 	h, data, err := rpc.DecodePacket(pkt)
 	if err != nil {
 		return // Azahar drops these silently (PROTOCOL.md §4)
@@ -234,15 +300,6 @@ func (s *Server) handle(pkt []byte, addr net.Addr) {
 	s.requests = append(s.requests, h)
 	if s.dropNext > 0 {
 		s.dropNext--
-		s.mu.Unlock()
-		return
-	}
-	if s.reloadPend != nil {
-		// LoadState takes effect: memory restored, server recreated, this
-		// request is lost (PROTOCOL.md §1).
-		s.mem = s.reloadPend
-		s.reloadPend = nil
-		s.selected = rpc.NoProcess
 		s.mu.Unlock()
 		return
 	}
@@ -257,19 +314,19 @@ func (s *Server) handle(pkt []byte, addr net.Addr) {
 	}
 	if stale {
 		old, _ := rpc.EncodePacket(h.ID-1, h.Type, []byte{1, 2, 3, 4})
-		_, _ = s.conn.WriteTo(old, addr)
-		_, _ = s.conn.WriteTo([]byte{1, 2, 3}, addr)
+		_, _ = conn.WriteTo(old, addr)
+		_, _ = conn.WriteTo([]byte{1, 2, 3}, addr)
 	}
-	s.send(h, reply, addr)
+	s.send(conn, h, reply, addr)
 }
 
-func (s *Server) send(h rpc.Header, reply []byte, addr net.Addr) {
+func (s *Server) send(conn net.PacketConn, h rpc.Header, reply []byte, addr net.Addr) {
 	out := make([]byte, rpc.HeaderSize, rpc.HeaderSize+len(reply))
 	binary.LittleEndian.PutUint32(out[0:], h.Version) // echoed, even if wrong
 	binary.LittleEndian.PutUint32(out[4:], h.ID)
 	binary.LittleEndian.PutUint32(out[8:], uint32(h.Type))
 	binary.LittleEndian.PutUint32(out[12:], uint32(len(reply)))
-	_, _ = s.conn.WriteTo(append(out, reply...), addr)
+	_, _ = conn.WriteTo(append(out, reply...), addr)
 }
 
 func minSize(t rpc.RequestType) (int, bool) {
@@ -348,13 +405,15 @@ func (s *Server) dispatch(h rpc.Header, data []byte, addr net.Addr) (reply []byt
 			s.states[a1] = cloneMem(s.mem)
 		}
 		if ok && h.Type == rpc.TypeLoadState {
+			// Like Azahar, an empty slot is accepted; the load then fails
+			// later without a restart (PROTOCOL.md §5.7).
 			st, found := s.states[a1]
-			ok = found
 			switch {
 			case found && s.cfg.NoRestartOnLoad:
 				s.mem = cloneMem(st)
 			case found:
-				s.reloadPend = cloneMem(st)
+				s.wg.Add(1)
+				go s.restart(cloneMem(st))
 			}
 		}
 		var v uint32
@@ -411,7 +470,9 @@ func (s *Server) takeScreenshot(h rpc.Header, scale, flags uint32, addr net.Addr
 		s.mu.Lock()
 		s.shotBusy, s.shotData = false, data
 		s.mu.Unlock()
-		s.send(h, reply, addr)
+		if c := s.currentConn(); c != nil {
+			s.send(c, h, reply, addr)
+		}
 	}()
 	return nil, true
 }

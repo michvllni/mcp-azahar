@@ -320,10 +320,13 @@ func TestSaveLoadState(t *testing.T) {
 	if err := c.WriteMemory(ctx, 0x00101000, []byte("new!")); err != nil {
 		t.Fatal(err)
 	}
-	// The fake drops the first request after the load and resets the
-	// selection, like Azahar recreating its RPC server.
+	// The fake closes its socket for a while and re-binds it, resetting the
+	// selection, like Azahar recreating its RPC server: probes are refused.
 	if err := c.LoadState(ctx, 1); err != nil {
 		t.Fatalf("LoadState: %v", err)
+	}
+	if srv.Restarts() != 1 {
+		t.Fatalf("restarts = %d", srv.Restarts())
 	}
 	if srv.Selected() != 11 {
 		t.Fatalf("process not re-selected: %#x", srv.Selected())
@@ -331,46 +334,100 @@ func TestSaveLoadState(t *testing.T) {
 	if got, err := c.ReadMemory(ctx, 0x00101000, 4); err != nil || string(got) != "old!" {
 		t.Fatalf("after load: %q, %v", got, err)
 	}
-	if err := c.LoadState(ctx, 5); !errors.Is(err, rpc.ErrNotAccepted) {
-		t.Fatalf("missing slot: %v", err)
-	}
 	if err := c.SaveState(ctx, rpc.SaveStateSlots); err == nil {
 		t.Fatal("slot 11 accepted")
 	}
 }
 
-func TestLoadStateWithoutSelectionReturnsImmediately(t *testing.T) {
-	srv, c := setup(t, fakeserver.Config{}, rpc.Options{})
+func TestLoadStateWithoutSelection(t *testing.T) {
+	srv, c := setup(t, fakeserver.Config{}, rpc.Options{PollInterval: 10 * time.Millisecond})
 	ctx := context.Background()
+	srv.SetMemory(0x00101000, []byte("A"))
 	if err := c.SaveState(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
+	srv.SetMemory(0x00101000, []byte("B"))
 	if err := c.LoadState(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if n := srv.CountRequests(rpc.TypeSetGetProcess); n != 0 {
-		t.Errorf("polled %d times without a selected process", n)
+	// LoadState returns only after the reload, even without a selection.
+	if got := srv.Memory(0x00101000, 1); string(got) != "A" || srv.Restarts() != 1 {
+		t.Fatalf("memory %q, restarts %d", got, srv.Restarts())
+	}
+	if srv.Selected() != rpc.NoProcess {
+		t.Fatalf("selection = %#x, want none", srv.Selected())
 	}
 }
 
-func TestLoadStateReloadTimeout(t *testing.T) {
-	_, c := setup(t, fakeserver.Config{NoRestartOnLoad: true}, rpc.Options{
-		Timeout: 20 * time.Millisecond, ReloadTimeout: 150 * time.Millisecond, PollInterval: 10 * time.Millisecond,
+func TestLoadStateEmptySlot(t *testing.T) {
+	// Azahar accepts a load from an empty slot and fails afterwards.
+	srv, c := setup(t, fakeserver.Config{}, rpc.Options{
+		ReloadTimeout: 200 * time.Millisecond, PollInterval: 10 * time.Millisecond,
 	})
 	ctx := context.Background()
 	if err := c.SelectProcess(ctx, 11); err != nil {
 		t.Fatal(err)
 	}
+	err := c.LoadState(ctx, 5)
+	if !errors.Is(err, rpc.ErrStateNotLoaded) {
+		t.Fatalf("err = %v, want ErrStateNotLoaded", err)
+	}
+	if srv.Selected() != 11 {
+		t.Fatalf("selection not restored: %#x", srv.Selected())
+	}
+}
+
+func TestLoadStateNoRestart(t *testing.T) {
+	srv, c := setup(t, fakeserver.Config{NoRestartOnLoad: true}, rpc.Options{
+		Timeout: 20 * time.Millisecond, ReloadTimeout: 150 * time.Millisecond, PollInterval: 10 * time.Millisecond,
+	})
+	ctx := context.Background()
 	if err := c.SaveState(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	err := c.LoadState(ctx, 2)
-	if !errors.Is(err, rpc.ErrTimeout) {
-		t.Fatalf("err = %v, want ErrTimeout (server never restarted)", err)
+	if err := c.LoadState(ctx, 2); !errors.Is(err, rpc.ErrStateNotLoaded) {
+		t.Fatalf("err = %v, want ErrStateNotLoaded", err)
 	}
 	if d := time.Since(start); d < 150*time.Millisecond || d > 2*time.Second {
 		t.Fatalf("gave up after %v, want about ReloadTimeout", d)
+	}
+	if srv.Selected() != rpc.NoProcess {
+		t.Fatalf("marker selection left behind: %#x", srv.Selected())
+	}
+}
+
+func TestLoadStateCallerDeadline(t *testing.T) {
+	_, c := setup(t, fakeserver.Config{NoRestartOnLoad: true}, rpc.Options{PollInterval: 10 * time.Millisecond})
+	if err := c.SaveState(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if err := c.LoadState(ctx, 2); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestRequestRetriedThroughRestartGap(t *testing.T) {
+	srv, c := setup(t, fakeserver.Config{RestartGap: 300 * time.Millisecond}, rpc.Options{PollInterval: 10 * time.Millisecond})
+	other, err := rpc.Dial(context.Background(), rpc.UDPDialer(srv.Addr()), rpc.Options{Timeout: 100 * time.Millisecond, Retries: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	ctx := context.Background()
+	if err := c.SaveState(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.LoadState(ctx, 1) }()
+	time.Sleep(80 * time.Millisecond) // inside the gap: the port is closed
+	if _, err := other.Processes(ctx); err != nil {
+		t.Fatalf("request during restart gap: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("LoadState: %v", err)
 	}
 }
 
@@ -445,8 +502,55 @@ func TestNoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.Close() }()
-	// Nothing listens: either a timeout or "connection refused" (ICMP).
-	if _, err := c.ReadMemory(context.Background(), 0, 4); err == nil {
-		t.Fatal("expected an error without a server")
+	// Nothing listens: "connection refused" (ICMP) or silence, both ErrTimeout.
+	if _, err := c.ReadMemory(context.Background(), 0, 4); !errors.Is(err, rpc.ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+}
+
+func TestConcurrentScreenshotsDoNotTear(t *testing.T) {
+	_, c := setup(t, fakeserver.Config{}, rpc.Options{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			screen, want := rpc.ScreenTop, byte(255) // red
+			if i%2 == 1 {
+				screen, want = rpc.ScreenBottom, 0 // blue: R = 0
+			}
+			img, err := c.Screenshot(context.Background(), rpc.ScreenshotRequest{Screen: screen, Scale: 2, Raw: true})
+			if err == nil {
+				for p := 0; p < len(img.Data); p += 3 * 997 {
+					if img.Data[p] != want {
+						err = errors.New("pixel from the other screen: torn screenshot")
+						break
+					}
+				}
+			}
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCancelRacingReplyDoesNotAffectNextRequest(t *testing.T) {
+	_, c := setup(t, fakeserver.Config{}, rpc.Options{StateTimeout: 2 * time.Second})
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(time.Duration(i%7) * 20 * time.Microsecond); cancel() }()
+		_, _ = c.Process(ctx)
+		cancel()
+		// A one-shot request right after must not inherit the cancel.
+		if err := c.SaveState(context.Background(), 1); err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
 	}
 }
