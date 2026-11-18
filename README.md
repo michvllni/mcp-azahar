@@ -4,9 +4,9 @@ Unofficial MCP server and CLI for the Azahar 3DS emulator: automate testing of 3
 > **Unofficial.** This project is not affiliated with or endorsed by the
 > [Azahar](https://github.com/azahar-emu/azahar) project.
 
-**Status:** early development ([docs/PLAN.md](docs/PLAN.md): phases 0–3
+**Status:** early development ([docs/PLAN.md](docs/PLAN.md): phases 0–4
 done: tooling, protocol research, RPC client, sessions and process
-manager). There are no usable commands yet besides `version`; the CLI
+manager, screenshots). There are no usable commands yet besides `version`; the CLI
 arrives in Phase 5. Current status and open questions:
 [NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
 documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).

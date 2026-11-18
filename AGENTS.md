@@ -22,6 +22,7 @@ internal/            all behavior; CLI and MCP call the same functions
     fakeserver/      in-process fake Azahar RPC server for tests
   session/           session files, host-wide lock, process liveness
   emu/               launch/attach/stop/status of Azahar (+ Xvfb), D9 rules
+  capture/           screenshots via RPC (D4), 3DS-style composite
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
@@ -32,7 +33,7 @@ docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
-Planned packages (see PLAN.md): `internal/capture`, `internal/server`.
+Planned packages (see PLAN.md): `internal/server`.
 
 ## Build, test, lint
 ```sh
@@ -58,6 +59,8 @@ port 45987 free:
 ```sh
 MCPAZ_LIVE=1 [AZAHAR_BIN=...] go test -tags integration -run TestLiveLaunch -v ./internal/emu/
 ```
+Live capture test against a running Azahar (single-screen layout):
+`AZAHAR_RPC_ADDR=127.0.0.1:45987 go test -tags integration -run TestLiveCapture -v ./internal/capture/`.
 The `internal/emu` unit tests run the test binary itself as a fake Azahar
 (`MCPAZ_FAKE_AZAHAR=1`, modes in `fakeAzahar()`), so launch/stop logic is
 tested with real processes but without the emulator.
