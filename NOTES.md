@@ -120,6 +120,13 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   removal, relaunch) also SIGKILLs what is left of a process group whose
   leader exited (wrapper scripts without `exec`), only while the leader's
   PID is free, so the group ID cannot have been reused.
+- A killed multi-threaded process (Azahar, or the Go fake in tests) can
+  show its main thread as a zombie while other threads are still exiting;
+  its sockets are released only after the last thread. `session.Alive`
+  therefore counts a zombie as dead only when `/proc/<pid>/task` has no
+  other threads. Found because `TestStaleSessionRemoved` failed on CI
+  (port still held right after the kill); PR #10 was merged despite that
+  red run, fixed right after.
 - Moved-aside session directories (`<name>.d.<timestamp>`) are never
   deleted automatically; remove them by hand when no longer needed.
 - Unreadable session files: `launch` refuses, `stop` removes the file and
