@@ -38,3 +38,4 @@ go.work.sum
 /dist/
 testdata/fixture/*.png
 testdata/fixture/build/
+/.release/

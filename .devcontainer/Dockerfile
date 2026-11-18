@@ -15,6 +15,10 @@ FROM ${BASE_IMAGE}
 # install-go-tools.sh (single source for image and CI, updated by Renovate).
 ARG AZAHAR_VERSION=2127.0-rc3
 ARG AZAHAR_SHA256=173dcedb78357c4920ddfca385fdce273e2e9e31b874564830068061f98fc1da
+# Digest of azahar-unified-source-<version>.tar.xz of the same release: not
+# used in this image; scripts/azahar-source.sh reads it for the release
+# (GPL corresponding source for the container image, DECISIONS.md D10).
+ARG AZAHAR_SOURCE_SHA256=683316355293adcded2af707c5b7d6361da6f786b5b2682af49ed904e369ea95
 
 # Xvfb + Mesa, Qt/XCB runtime deps, capture/inspection tools, and the libs
 # Azahar's bundle expects from the host (found with ldd).

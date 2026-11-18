@@ -27,6 +27,17 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
   `attach` only, see [NOTES.md](NOTES.md)).
 - Go 1.27 to build from source.
 
+## Install
+- **Container image** (Linux/amd64; includes Azahar, Xvfb and Mesa, nothing
+  else to install): `docker run -i --rm -v "$PWD:/work" ghcr.io/michvllni/mcp-azahar`
+  starts the MCP server over stdio with your project as `/work`; append a CLI
+  command to run it instead, e.g. `... ghcr.io/michvllni/mcp-azahar version`.
+  Do not publish UDP port 45987 (`-p`) or use `--network host`: Azahar's RPC
+  server is unauthenticated. Run one container per parallel session.
+- **Release binaries**: archives for Linux, macOS and Windows (amd64, arm64)
+  on the [releases page](https://github.com/michvllni/mcp-azahar/releases).
+- **Go**: `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.
+
 ## CLI quickstart
 ```sh
 go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest

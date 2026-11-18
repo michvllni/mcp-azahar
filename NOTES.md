@@ -87,6 +87,26 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 8a (container image)
+- Image built by goreleaser `dockers_v2` (since 2.12; still marked
+  provisional, becomes `dockers` in v3) from `packaging/image/Dockerfile`:
+  `debian:trixie-slim` (pinned digest), Azahar extracted by
+  `install-azahar.sh` in a builder stage, Xvfb + Mesa + the Dockerfile's
+  host libraries, non-root user `azahar`, workdir `/work`, entrypoint
+  `mcp-azahar`, default command `serve`. Label
+  `io.modelcontextprotocol.server.name` for the MCP Registry (D10).
+- GPL: `scripts/azahar-source.sh` downloads Azahar's
+  `azahar-unified-source-2127.0-rc3.tar.xz` (41 MiB, digest pinned as
+  `AZAHAR_SOURCE_SHA256`), the release attaches it, and the image ships
+  Azahar's `LICENSE.txt` (GPL-3.0 text) from it. The extracted AppImage
+  contains no Azahar license file of its own.
+- buildx: the release job creates a `docker-container` builder (SBOM
+  attestations need it) and logs in to ghcr with `GITHUB_TOKEN`
+  (`packages: write`) with plain docker commands, no extra actions.
+- No container runtime in the Coder workspace: the image is only built
+  and tested in CI (job `image`: snapshot build, then the fixture is
+  launched inside the image, and `tools/list` over `docker run -i`).
+
 ### Phase 7
 - The fixture (`testdata/fixture/main.c`) builds in CI with
   `devkitpro/devkitarm:20260610` (pinned by digest); locally the artifact

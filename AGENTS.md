@@ -34,7 +34,10 @@ internal/            all behavior; CLI and MCP call the same functions
                      CLI command, `Spec.CLI` names the counterpart
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh,
-                     build-testdata.sh (rebuilds the committed test ELFs)
+                     build-testdata.sh (rebuilds the committed test ELFs),
+                     azahar-source.sh (Azahar source tarball + license)
+packaging/image/     release container image (Dockerfile, NOTICE.md),
+                     built by goreleaser dockers_v2
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
 .github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
 .github/             issue templates, PR template, renovate.json5
@@ -108,6 +111,10 @@ goreleaser check && goreleaser build --snapshot --clean
   version (SemVer suffix like `-rc.1` ⇔ pre-release). Then it tests and runs
   goreleaser, which uploads the archives into that release, keeping its
   notes and title (`.goreleaser.yaml` `release:`).
+- The release job also builds and pushes the image
+  `ghcr.io/michvllni/mcp-azahar` (`<version>`, `latest` unless a
+  pre-release) and attaches Azahar's source tarball (GPL, D10). CI job
+  `image` builds it as a snapshot and launches the fixture inside it.
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
   then create a GitHub release on `main` with a new tag `v<version>` and
   publish it. Do not push tags by hand. Only the maintainer releases. If
@@ -181,9 +188,11 @@ goreleaser check && goreleaser build --snapshot --clean
   recorded in `.devcontainer/` (Dockerfile ARG / install script). Add it to
   the checklist in `NOTES.md`.
 - Base image: `devcontainers/base` trixie (Azahar 2127 needs glibc >= 2.39).
-- Pinned versions: Azahar `AZAHAR_VERSION`/`AZAHAR_SHA256` as Dockerfile
-  ARGs (bump by hand, both together: the digest is on the GitHub release
-  asset). golangci-lint, goreleaser and actionlint in the defaults of
+- Pinned versions: Azahar `AZAHAR_VERSION`/`AZAHAR_SHA256`/
+  `AZAHAR_SOURCE_SHA256` as Dockerfile ARGs (bump by hand, all three
+  together: digests of `azahar.AppImage` and
+  `azahar-unified-source-<version>.tar.xz` of that release). CI, the
+  release image and `scripts/azahar-source.sh` read them from there. golangci-lint, goreleaser and actionlint in the defaults of
   `.devcontainer/install-go-tools.sh` (used by the image and CI), plus the
   `version:` inputs in the workflows; Renovate keeps them in sync.
 - `.devcontainer/install-azahar.sh` extracts the AppImage with `unsquashfs`

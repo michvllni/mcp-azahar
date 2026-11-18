@@ -36,8 +36,10 @@ jobs:
     name: goreleaser
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
+      packages: write # ghcr.io/michvllni/mcp-azahar
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,6 +47,17 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      - name: Azahar version, digest and source tarball (pinned in .devcontainer/Dockerfile)
+        run: |
+          echo "AZAHAR_VERSION=$(sed -n 's/^ARG AZAHAR_VERSION=//p' .devcontainer/Dockerfile)" >> "$GITHUB_ENV"
+          echo "AZAHAR_SHA256=$(sed -n 's/^ARG AZAHAR_SHA256=//p' .devcontainer/Dockerfile)" >> "$GITHUB_ENV"
+          scripts/azahar-source.sh
+      - name: buildx builder (needed for the SBOM attestation) and ghcr login
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker buildx create --name goreleaser --use
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
