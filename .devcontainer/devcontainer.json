@@ -1,0 +1,30 @@
+{
+  // SPDX-License-Identifier: GPL-3.0-or-later
+  // Reconstructed from the running Coder workspace (base-debian bookworm +
+  // Go, Node and Claude Code features). Compare with the Coder template before
+  // relying on it; see NOTES.md.
+  "name": "mcp-azahar",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.27.3"
+    },
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "AZAHAR_BIN": "/opt/azahar/AppRun"
+  },
+  "postCreateCommand": "go mod download",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go"
+      ]
+    }
+  }
+}
