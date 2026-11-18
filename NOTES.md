@@ -75,9 +75,10 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
 ### Phase 3
-- `emu.Manager.Launch`, under the store lock plus a best-effort lock at a
-  fixed path in the system temp dir (shared by all users and state dirs;
-  skipped if another user's file is not writable):
+- `emu.Manager.Launch`, under the store lock plus a best-effort host lock
+  `/tmp/mcp-azahar-45987.lock` (shared by all users and state dirs; opened
+  without `O_CREAT` so `fs.protected_regular` allows it, never through a
+  symlink; skipped if it cannot be opened):
   - checks the session name and the RPC port (holder named: session from
     session files; on Linux the process via `/proc/net/udp` + `/proc/*/fd`);
   - moves an existing `sessions/<name>.d` aside to `<name>.d.<timestamp>`
@@ -89,15 +90,21 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
     is left alone (overriding it broke X auth on a user display);
   - waits for RPC, then verifies ownership: it waits for Azahar's
     `Starting RPC server` log line, rejects `Error starting UDP server`,
-    and on Linux requires the port's socket owner to be the started PID or
-    a descendant; a socket whose owner is unreadable (another user) or no
-    socket at all counts as foreign. On macOS only the log check applies.
+    and on Linux requires every socket on the port to belong to the
+    started PID or a descendant; a socket whose owner is unreadable
+    (another user) or no socket at all counts as foreign. On macOS only the
+    log check applies, which depends on Azahar's log timing and is not
+    verified live.
 - `launch` refuses on Windows: Azahar takes its portable `user/` dir from
   next to the executable there (`file_util.cpp:944-946`), so sessions
   cannot get an isolated config with RPC enabled. `attach` works.
 - Process identity is PID plus start time on Linux (`/proc`), macOS
-  (sysctl) and Windows (creation time). `Stop` also SIGKILLs what is left
-  of the process group after the leader exits (wrapper scripts).
+  (sysctl) and Windows (creation time). Every cleanup (stop, prune, stale
+  removal, relaunch) also SIGKILLs what is left of a process group whose
+  leader exited (wrapper scripts without `exec`), only while the leader's
+  PID is free, so the group ID cannot have been reused.
+- Moved-aside session directories (`<name>.d.<timestamp>`) are never
+  deleted automatically; remove them by hand when no longer needed.
 - Unreadable session files: `launch` refuses, `stop` removes the file and
   warns that its processes may still run.
   Failures stop everything started and include the tail of Azahar's output

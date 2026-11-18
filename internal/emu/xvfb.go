@@ -71,7 +71,8 @@ func startXvfb(ctx context.Context, bin, logPath string) (*os.Process, string, e
 
 func startXvfbOn(ctx context.Context, bin string, n int, logPath string) (*os.Process, error) {
 	display := ":" + strconv.Itoa(n)
-	logf, err := os.Create(logPath)
+	// Append: the logs of earlier attempts on other displays stay readable.
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}

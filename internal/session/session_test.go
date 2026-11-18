@@ -176,7 +176,7 @@ func TestRunning(t *testing.T) {
 
 func TestHostLock(t *testing.T) {
 	key := "test-" + strconv.Itoa(os.Getpid())
-	t.Cleanup(func() { _ = os.Remove(filepath.Join(os.TempDir(), "mcp-azahar-"+key+".lock")) })
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(hostLockDir(), "mcp-azahar-"+key+".lock")) })
 	release, ok, err := HostLock(context.Background(), key)
 	if err != nil || !ok {
 		t.Fatalf("HostLock = %v, %v", ok, err)
@@ -192,4 +192,31 @@ func TestHostLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	release2()
+}
+
+func TestHostLockRefusesSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only")
+	}
+	key := "symlink-" + strconv.Itoa(os.Getpid())
+	path := filepath.Join(hostLockDir(), "mcp-azahar-"+key+".lock")
+	target := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	release, ok, err := HostLock(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if ok {
+		t.Fatal("lock taken through a symlink")
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("symlink target mode changed to %v", fi.Mode().Perm())
+	}
 }

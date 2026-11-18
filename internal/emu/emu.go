@@ -268,8 +268,8 @@ func (m *Manager) checkPort() error {
 		}
 	}
 	if holder == "another process" {
-		if o, st := udpPortOwner(m.port()); st == ownerFound {
-			holder = fmt.Sprintf("process %d (%s)", o.PID, o.Comm)
+		if owners, st := udpPortOwners(m.port()); st == ownerFound {
+			holder = fmt.Sprintf("process %d (%s)", owners[0].PID, owners[0].Comm)
 		}
 	}
 	return fmt.Errorf("%w: UDP port %d is held by %s; with Azahar 2127 only one RPC-enabled Azahar can run per host (DECISIONS.md D9)",
@@ -358,12 +358,16 @@ func (m *Manager) verifyOwner(ctx context.Context, s *session.Session) error {
 	if b, err := os.ReadFile(s.LogPath); err == nil && bytes.Contains(b, []byte("Error starting UDP server")) {
 		return fmt.Errorf("%w: Azahar could not bind UDP port %d", ErrNotOwner, m.port())
 	}
-	o, st := udpPortOwner(m.port())
+	owners, st := udpPortOwners(m.port())
 	switch st {
 	case ownerFound:
-		if !isSelfOrDescendant(o.PID, s.Azahar.PID) {
-			return fmt.Errorf("%w: UDP port %d is held by process %d (%s), not by the started Azahar (%d)",
-				ErrNotOwner, m.port(), o.PID, o.Comm, s.Azahar.PID)
+		// Every socket on the port must be ours (SO_REUSEADDR/PORT allow
+		// several).
+		for _, o := range owners {
+			if !isSelfOrDescendant(o.PID, s.Azahar.PID) {
+				return fmt.Errorf("%w: UDP port %d is held by process %d (%s), not by the started Azahar (%d)",
+					ErrNotOwner, m.port(), o.PID, o.Comm, s.Azahar.PID)
+			}
 		}
 	case ownerHidden:
 		return fmt.Errorf("%w: UDP port %d is held by a process this user cannot inspect", ErrNotOwner, m.port())
@@ -535,11 +539,15 @@ func (m *Manager) Stop(ctx context.Context, name string, keepFiles bool) error {
 func (m *Manager) cleanup(s *session.Session, removeDir bool) error {
 	var errs []error
 	if s.Kind == session.KindLaunched {
+		// KillGroupRest also covers a leader that died earlier (stale
+		// session) while children of a wrapper script still run.
 		if s.Azahar != nil {
 			errs = append(errs, terminate(*s.Azahar, syscall.SIGHUP, m.stopTimeout()))
+			session.KillGroupRest(*s.Azahar)
 		}
 		if s.Xvfb != nil {
 			errs = append(errs, terminate(*s.Xvfb, syscall.SIGTERM, m.stopTimeout()))
+			session.KillGroupRest(*s.Xvfb)
 		}
 		if removeDir && s.Dir != "" {
 			errs = append(errs, os.RemoveAll(s.Dir))

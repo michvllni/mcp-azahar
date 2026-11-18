@@ -639,3 +639,38 @@ func countProcs(comm string) int {
 	}
 	return n
 }
+
+func TestStaleWrapperChildKilledOnPrune(t *testing.T) {
+	m := newManager(t, "")
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "azahar-wrapper.sh")
+	script := "#!/bin/sh\n\"" + os.Args[0] + "\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.AzaharBin = wrapper
+	pidFile := filepath.Join(dir, "child.pid")
+	t.Setenv("MCPAZ_FAKE_PIDFILE", pidFile)
+	s, err := m.Launch(context.Background(), "a", launchOpts(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := strconv.Atoi(string(b))
+	childProc := session.ProcFor(child)
+	// The wrapper (group leader) crashes; its child keeps the RPC port.
+	_ = syscall.Kill(s.Azahar.PID, syscall.SIGKILL)
+	waitDead(*s.Azahar, 3*time.Second)
+	if !session.Alive(childProc) {
+		t.Fatal("child died with the wrapper; test setup broken")
+	}
+	if removed, err := m.Prune(context.Background()); err != nil || len(removed) != 1 {
+		t.Fatalf("Prune = %v, %v", removed, err)
+	}
+	if !waitDead(childProc, 3*time.Second) {
+		t.Fatal("orphaned child of a stale session survived Prune")
+	}
+}

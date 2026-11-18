@@ -50,10 +50,15 @@ func Signal(p Proc, sig syscall.Signal) error {
 }
 
 // KillGroupRest sends SIGKILL to what is left of the process group led by
-// the (now dead) process p, e.g. children of a wrapper script. Call it
-// right after p has exited, so its PID cannot have been reused yet.
+// p after p itself has exited, e.g. children of a wrapper script without
+// exec. It acts only when p's PID is free (ESRCH): while members of the
+// old group live, its group ID cannot be reused, so -PID still means that
+// group.
 func KillGroupRest(p Proc) {
-	if p.PID > 0 && unix.Kill(-p.PID, 0) == nil {
+	if p.PID <= 0 || !errors.Is(unix.Kill(p.PID, 0), unix.ESRCH) {
+		return
+	}
+	if unix.Kill(-p.PID, 0) == nil {
 		_ = unix.Kill(-p.PID, unix.SIGKILL)
 	}
 }

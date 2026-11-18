@@ -163,18 +163,16 @@ func (st *Store) Lock(ctx context.Context) (func(), error) {
 }
 
 // HostLock takes a lock shared by every user and state directory on this
-// host, at a fixed path in the system temp directory (DECISIONS.md D9: one
-// RPC-enabled Azahar per host). It is best effort: if the file cannot be
-// opened (e.g. created by another user without write access for others),
-// it returns a no-op release function and ok=false; the port and owner
-// checks still apply then.
+// host, at a fixed path (/tmp on Unix, the temp dir on Windows), for
+// DECISIONS.md D9: one RPC-enabled Azahar per host. It is best effort: if
+// the file cannot be opened (e.g. another user created it and the kernel
+// refuses to open it, fs.protected_regular), it returns a no-op release
+// function and ok=false; the port and owner checks still apply then.
 func HostLock(ctx context.Context, key string) (release func(), ok bool, err error) {
-	p := filepath.Join(os.TempDir(), "mcp-azahar-"+key+".lock")
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o666)
+	f, err := openSharedLockFile(filepath.Join(hostLockDir(), "mcp-azahar-"+key+".lock"))
 	if err != nil {
 		return func() {}, false, nil
 	}
-	_ = f.Chmod(0o666) // let other users share it despite the umask
 	release, err = lockFile(ctx, f)
 	if err != nil {
 		return nil, false, err

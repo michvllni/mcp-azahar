@@ -13,10 +13,11 @@ import (
 	"strings"
 )
 
-// udpPortOwner finds the process holding UDP port through /proc/net/udp
-// (socket inode) and /proc/<pid>/fd (which process has that inode).
-// Processes of other users are invisible without privileges: ownerHidden.
-func udpPortOwner(port int) (portOwner, ownerStatus) {
+// udpPortOwners finds the processes holding UDP port through
+// /proc/net/udp(6) (socket inodes) and /proc/<pid>/fd (which process has
+// each inode). If any inode's owner cannot be read (another user's
+// process, invisible without privileges), the result is ownerHidden.
+func udpPortOwners(port int) ([]portOwner, ownerStatus) {
 	inodes := map[string]bool{}
 	for _, f := range []string{"/proc/net/udp", "/proc/net/udp6"} {
 		for _, ino := range udpInodes(f, port) {
@@ -24,8 +25,10 @@ func udpPortOwner(port int) (portOwner, ownerStatus) {
 		}
 	}
 	if len(inodes) == 0 {
-		return portOwner{}, ownerNotBound
+		return nil, ownerNotBound
 	}
+	var owners []portOwner
+	found := map[string]bool{}
 	pids, _ := filepath.Glob("/proc/[0-9]*")
 	for _, dir := range pids {
 		fds, err := os.ReadDir(filepath.Join(dir, "fd"))
@@ -38,15 +41,20 @@ func udpPortOwner(port int) (portOwner, ownerStatus) {
 				continue
 			}
 			ino, ok := strings.CutPrefix(link, "socket:[")
-			if !ok || !inodes[strings.TrimSuffix(ino, "]")] {
+			ino = strings.TrimSuffix(ino, "]")
+			if !ok || !inodes[ino] {
 				continue
 			}
 			pid, _ := strconv.Atoi(filepath.Base(dir))
 			comm, _ := os.ReadFile(filepath.Join(dir, "comm"))
-			return portOwner{PID: pid, Comm: strings.TrimSpace(string(comm))}, ownerFound
+			owners = append(owners, portOwner{PID: pid, Comm: strings.TrimSpace(string(comm))})
+			found[ino] = true
 		}
 	}
-	return portOwner{}, ownerHidden
+	if len(found) < len(inodes) {
+		return owners, ownerHidden
+	}
+	return owners, ownerFound
 }
 
 // udpInodes returns the socket inodes bound to port in a /proc/net/udp file.
