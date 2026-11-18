@@ -11,7 +11,7 @@ arrives in Phase 5. Current status and open questions:
 [NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
 documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-## What it will do
+## What it does
 One Go binary, two front ends over the same code:
 - a CLI for humans, shell scripts, CI and agents using bash
 - an MCP server (`mcp-azahar serve`) for MCP clients
@@ -23,7 +23,43 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
 ## Requirements
 - Azahar **2127.0** or newer (RPC input injection and save states).
   The dev container pins 2127.0-rc3.
+- Linux with Xvfb for headless `launch` (macOS: launch on the desktop; Windows:
+  `attach` only, see [NOTES.md](NOTES.md)).
 - Go 1.27 to build from source.
+
+## CLI quickstart
+```sh
+go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest
+export AZAHAR_BIN=/path/to/azahar   # or put azahar in PATH
+
+mcp-azahar launch game.3dsx          # headless on its own Xvfb, waits for RPC
+mcp-azahar press A                   # press briefly (100 ms), --for 500ms for longer
+mcp-azahar hold L; mcp-azahar touch 160 120; mcp-azahar release
+mcp-azahar circle-pad 154 0 --for 300ms
+mcp-azahar screenshot --screen both -o shot.png
+mcp-azahar read 0x00100000 16 --format dump
+mcp-azahar write 0x00101000 'de ad be ef'   # verified by reading back
+mcp-azahar state save 1; mcp-azahar state load 1
+mcp-azahar logs --tail 20 --contains Error   # -f to follow, --from <offset> to resume
+mcp-azahar stop
+```
+- **Sessions:** every command acts on a session: `--session NAME`, or
+  `$MCP_AZAHAR_SESSION`, default `default`. `sessions` lists them, `status`
+  shows one, and `attach --address host:port` registers an Azahar you started
+  yourself (RPC enabled, app loaded). With Azahar 2127 only one RPC-enabled
+  Azahar can run per host (DECISIONS.md D9).
+- **Input:** `hold`, `touch --hold` and `circle-pad --hold` stay until
+  `release`; `press`, and `touch`/`circle-pad` without `--hold`, apply on top
+  of the held input and then return to it.
+- **Output:** `--json` prints machine-readable output with stable field
+  names; arrays are never null. It cannot be combined with `read --format raw`.
+  `logs -f --json` prints one `{"line": ...}` object per line. `--timeout 30s`
+  bounds a command; `logs -f` also ends when the session's emulator stops.
+- **Exit codes:** 0 ok, 1 error, 2 usage error, 3 check failed, 4 no such
+  session or emulator not running.
+- **State files:** they live in `$MCP_AZAHAR_STATE_DIR`, else
+  `$XDG_STATE_HOME/mcp-azahar`. A session's directory keeps Azahar's portable
+  user dir (config, log, save states).
 
 ## Development
 The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)

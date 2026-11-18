@@ -15,14 +15,16 @@ be committed.
 
 ## Structure
 ```
-cmd/mcp-azahar/      thin Cobra front end (CLI; later also `serve` for MCP);
-                     main.go holds `const version`, the release version
+cmd/mcp-azahar/      thin Cobra CLI over internal/ops (later also `serve` for
+                     MCP); main.go holds `const version`, root.go global
+                     flags and exit codes, commands.go the commands
 internal/            all behavior; CLI and MCP call the same functions
   rpc/               Azahar RPC client (protocol v2, docs/PROTOCOL.md)
     fakeserver/      in-process fake Azahar RPC server for tests
   session/           session files, host-wide lock, process liveness
   emu/               launch/attach/stop/status of Azahar (+ Xvfb), D9 rules
   capture/           screenshots via RPC (D4), 3DS-style composite
+  ops/               every user-facing operation, shared by CLI and MCP
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
@@ -106,7 +108,12 @@ goreleaser check && goreleaser build --snapshot --clean
   from Azahar keeps its copyright notice plus a comment naming the source
   file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI
-  and MCP.
+  and MCP. New features go into `internal/ops` first; front ends only parse
+  arguments and format output. Errors: `ops.ErrUsage` → exit 2,
+  `ops.ErrCheckFailed` → exit 3, `session.ErrNotFound` → exit 4.
+- Input state held across commands lives in the session file (`Held`):
+  Azahar replaces the whole input on every SetInput, and each CLI call is a
+  separate process.
 - `internal/rpc` mirrors `docs/PROTOCOL.md`: comments cite its sections.
   Behavior Azahar shows must be reproduced in `internal/rpc/fakeserver`
   (empty replies, dropped datagrams, LoadState closing and re-binding the

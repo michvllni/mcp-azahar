@@ -62,11 +62,12 @@ type Config struct {
 
 // Server is a fake RPC server listening on 127.0.0.1 (random port).
 type Server struct {
-	connMu sync.Mutex
-	conn   net.PacketConn // replaced on restart
-	addr   string
-	done   chan struct{}
-	wg     sync.WaitGroup
+	connMu    sync.Mutex
+	conn      net.PacketConn // replaced on restart
+	addr      string
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 
 	mu         sync.Mutex
 	cfg        Config
@@ -75,6 +76,7 @@ type Server struct {
 	input      rpc.Input
 	requests   []rpc.Header
 	dropNext   int
+	dropReply  int
 	stale      bool
 	delay      time.Duration
 	shotResult rpc.ScreenshotResult
@@ -153,8 +155,13 @@ func (s *Server) Restarts() int {
 	return s.restarts
 }
 
-// Close stops the server.
+// Close stops the server. It may be called more than once.
 func (s *Server) Close() error {
+	first := false
+	s.closeOnce.Do(func() { first = true })
+	if !first {
+		return nil
+	}
 	close(s.done)
 	s.connMu.Lock()
 	var err error
@@ -263,6 +270,14 @@ func (s *Server) DropNext(n int) {
 	s.dropNext = n
 }
 
+// DropRepliesNext makes the server apply the next n requests but not
+// answer them (a lost reply).
+func (s *Server) DropRepliesNext(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dropReply = n
+}
+
 // SendStaleReplies makes the server send a reply with a wrong ID and
 // a malformed datagram before every real reply.
 func (s *Server) SendStaleReplies(on bool) {
@@ -326,8 +341,12 @@ func (s *Server) handle(conn net.PacketConn, pkt []byte, addr net.Addr) {
 	}
 	stale, delay := s.stale, s.delay
 	reply, async := s.dispatch(h, data, addr)
+	lost := s.dropReply > 0
+	if lost {
+		s.dropReply--
+	}
 	s.mu.Unlock()
-	if async {
+	if async || lost {
 		return
 	}
 	if delay > 0 {

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Command mcp-azahar is an unofficial CLI and MCP server for the Azahar 3DS
-// emulator. All behavior lives in internal/ packages; this is a thin front end.
+// emulator. All behavior lives in internal/ packages (internal/ops); this is
+// a thin front end.
 package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
-
-	buildinfo "github.com/michvllni/mcp-azahar/internal/version"
 )
 
 // version is the release version (SemVer, without "v"). Bump it before
@@ -18,29 +18,18 @@ import (
 // (scripts/check-version.sh).
 const version = "0.1.0"
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "mcp-azahar",
-		Short:         "Unofficial MCP server and CLI for the Azahar 3DS emulator",
-		Version:       version,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "Print the mcp-azahar version",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "mcp-azahar", buildinfo.String(version))
-			return err
-		},
-	})
-	return root
+func main() {
+	os.Exit(run(newRootCmd(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+// run executes the CLI and returns the process exit code.
+func run(cmd *cobra.Command, args []string, stdout, stderr io.Writer) int {
+	cmd.SetArgs(args)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	err := cmd.Execute()
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "error:", err)
 	}
+	return exitCode(err)
 }

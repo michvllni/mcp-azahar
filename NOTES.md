@@ -17,8 +17,11 @@ at the top of each section.
   `internal/emu`): done, reviewed (PR #9, two rounds); live launch test
   passed.
 - Phase 4 (screenshots, `internal/capture`): done; live capture test
-  passed (top 400x240, bottom 320x240, composite 400x480). Next: Phase 5
-  (CLI).
+  passed (top 400x240, bottom 320x240, composite 400x480).
+- Phase 5a (CLI part 1, `internal/ops` + commands launch, attach, stop,
+  status, sessions, version, press, hold, release, touch, circle-pad,
+  screenshot, read, write, state, logs): done; end-to-end run against Azahar
+  passed. Next: Phase 5b (symbols, read-symbol, wait-for, sequence).
 
 ## Blockers
 
@@ -77,6 +80,55 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 5a
+- `internal/ops` holds every operation once; the CLI only parses and
+  prints. MCP (Phase 6) will call the same functions.
+- Held input is stored in the session file and merged into every
+  SetInput, because Azahar replaces the whole input state per request and
+  CLI calls are separate processes. `press` = held + pressed for a duration
+  (default 100 ms: about 23 HID updates at 234 Hz in emulated time, fewer
+  if emulation runs slower), then back to the held input as stored at that
+  moment (a `hold` made meanwhile is kept). It restores on every path,
+  including errors where Azahar may have applied the press but the reply
+  was lost.
+- Within one process (MCP server), `ops` serializes per session: input
+  changes; LoadState against memory requests; screenshot sequences.
+  Separate CLI processes are only coordinated through the session file.
+- After a successful `state load`, the held input is sent again (whether
+  Azahar keeps the override across a load is unverified).
+- Memory commands select the app process (newest PID) unless the selected
+  PID is a current process, so they work after launch, after a load, and
+  after a failed load left its marker PID selected.
+- `state load` refuses an empty slot for launched sessions (Azahar would
+  hang behind a modal dialog).
+- End-to-end run of the built binary against Azahar 2127.0-rc3 (minimal
+  3DSX): launch, second launch refused (exit 1, holder named), read/write
+  with verification and dump, hold/press/touch/circle-pad/release,
+  screenshot both (400x480 PNG), save/modify/load restored the bytes,
+  loading an empty slot refused (exit 2), logs, sessions --json, stop,
+  status afterwards exit 4, no process left.
+- Verified writes cannot detect a write of bytes equal to the current
+  content (e.g. zeros to unmapped memory); documented in `write --help`.
+- If a press cannot re-read the session file at its end (stopped
+  meanwhile, store lock unavailable), it still restores: the input it
+  started from, or nothing if the session is gone.
+- Known limitation: input changes run their SetInput while holding the
+  store's flock, so an unresponsive emulator can delay other session
+  commands by up to the RPC timeout (about 8 s). Acceptable with one
+  emulator per host (D9).
+- Logs: `ops.Logs` takes a byte offset (`From`) and returns the next one,
+  only complete lines (an unfinished line waits for the next call),
+  restarting at 0 when the file shrank (`logs --json` prints it, `--from`
+  takes it). `FollowLogs` builds on it: it starts after the last complete
+  line, or with the last `--tail` lines (a line still being written is
+  emitted whole once complete), follows a recreated file from its start
+  (file identity), and ends when the session is stopped or, for launched
+  sessions, the emulator exits, after a final read that also emits an
+  unfinished last line. The MCP server can use the offset as a cursor.
+- Addresses and lengths are hex with `0x` or decimal, never octal; `write`
+  bytes are in memory order and every group needs an even number of hex
+  digits.
+
 ### Phase 4
 - `capture.RPC` takes one RPC screenshot per screen (PNG straight from
   Azahar, no re-encoding) and checks the PNG against the reported size and
@@ -265,6 +317,11 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - Integration-test job deferred until the fixture exists (Phase 7).
 
 ## Deviations from PLAN.md
+- `state save|load` takes slots 0-10 only, not paths: Azahar's RPC
+  save/load commands only know slots (PROTOCOL.md §5.7). The state files are
+  in the session's `user/states/`.
+- `touch` and `circle-pad` also take `--for <duration>` (how long without
+  `--hold`), and `read` has `--format hex|dump|raw`.
 - Parallel sessions on one host are not supported with Azahar 2127
   (DECISIONS.md D9): one RPC-enabled Azahar per host, upstream request for a
   configurable port, namespaces in reserve. PLAN Phases 3, 7 and 8 updated.

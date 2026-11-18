@@ -68,19 +68,57 @@ const (
 )
 
 // Point is a bottom-screen touch position in pixels.
-type Point struct{ X, Y uint16 }
+type Point struct {
+	X uint16 `json:"x"`
+	Y uint16 `json:"y"`
+}
 
 // Stick is a circle pad position in raw HID units, -CirclePadMax..CirclePadMax.
-type Stick struct{ X, Y int16 }
+type Stick struct {
+	X int16 `json:"x"`
+	Y int16 `json:"y"`
+}
 
 // Input is the state SetInput applies. Azahar holds it until the next
 // SetInput; the zero Input releases everything.
 type Input struct {
-	Buttons   Button
-	Home      bool
-	Power     bool
-	Touch     *Point // nil: not touched
-	CirclePad *Stick // nil: not set (configured input devices apply)
+	Buttons   Button `json:"buttons,omitempty"`
+	Home      bool   `json:"home,omitempty"`
+	Power     bool   `json:"power,omitempty"`
+	Touch     *Point `json:"touch,omitempty"`      // nil: not touched
+	CirclePad *Stick `json:"circle_pad,omitempty"` // nil: not set (configured input devices apply)
+}
+
+// IsZero reports whether in releases everything.
+func (in Input) IsZero() bool {
+	return in.Buttons == 0 && !in.Home && !in.Power && in.Touch == nil && in.CirclePad == nil
+}
+
+// Merge returns in with other's buttons and flags added and other's touch
+// and circle pad taking precedence where set.
+func (in Input) Merge(other Input) Input {
+	out := in
+	out.Buttons |= other.Buttons
+	out.Home = out.Home || other.Home
+	out.Power = out.Power || other.Power
+	if other.Touch != nil {
+		out.Touch = other.Touch
+	}
+	if other.CirclePad != nil {
+		out.CirclePad = other.CirclePad
+	}
+	return out
+}
+
+// Names returns the names of the pressed buttons, sorted.
+func (b Button) Names() []string {
+	var out []string
+	for _, n := range ButtonNames() {
+		if b&buttonNames[n] != 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Validate checks the ranges Azahar would otherwise clamp silently.
