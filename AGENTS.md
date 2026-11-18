@@ -124,4 +124,6 @@ goreleaser check && goreleaser build --snapshot --clean
   is built in CI with the `devkitpro/devkitarm` image.
 - In the Coder workspace only `/home/vscode/volume` persists; anything
   installed elsewhere is gone after a restart unless the image has it.
-- The Azahar RPC server is unauthenticated: bind it to 127.0.0.1 only.
+- The Azahar RPC server is unauthenticated and listens on all interfaces
+  (fixed port 45987); never make it more reachable than that.
+- Screenshots come from Azahar's RPC (DECISIONS.md D4), not from X11.

@@ -109,22 +109,29 @@ Each CLI call is a separate process, so emulator lifetime must not depend
 on the caller.
 - `launch` starts Xvfb (free display, or reuse `$DISPLAY`) and Azahar
   detached, with an isolated user dir/config per session (RPC enabled,
-  bound to 127.0.0.1, free port), waits until RPC answers, then writes a
+  single-screen layout; see `docs/PROTOCOL.md` §7 for the seed config).
+  Azahar's RPC port is fixed (45987, all interfaces): how sessions isolate
+  it and run in parallel is decided before this phase (NOTES.md "Open
+  questions"). `launch` waits until RPC answers, then writes a
   session file: `$XDG_STATE_HOME/mcp-azahar/sessions/<name>.json`
   (PIDs, display, RPC port, user dir, log path, app path, ELF path).
 - Every other command attaches via the session file. Named sessions via
   `--session <name>` (default `default`) allow parallel instances.
 - `attach --port N [--elf path]` registers an Azahar the user started by
-  hand (RPC only; screenshots only if the display is known).
+  hand (RPC only; screenshots work too, since they use RPC).
 - `stop` terminates processes and removes the session; detect and clean
   up stale sessions (dead PIDs) automatically.
 - File locking around session files to avoid races.
 
 ## Phase 4 — Screenshots (`internal/capture`)
-- Interface `Capturer` with backend `x11`: grab the Azahar window (or root)
-  on the session's display, crop to top (400x240) and bottom (320x240)
-  screens using a fixed, known layout set in the session config. PNG out.
-- Leave room for a future `rpc` backend if Azahar adds a screenshot command.
+Changed after Phase 1 (DECISIONS.md D4): screenshots use Azahar's RPC.
+- Interface `Capturer` with backend `rpc`: `TakeScreenshot` +
+  `ReadScreenshot` from `internal/rpc`; top screen = normal capture,
+  bottom screen = `SecondaryWindow` flag, `both` = two captures. Sessions
+  pin `layout_option=1`; report the actual image size (attached instances
+  may use another layout). Optional resolution scale. PNG out.
+- Map `Unsupported`/`Busy`/`Timeout` results to clear errors (software
+  renderer, concurrent capture, emulation not rendering).
 
 ## Phase 5 — CLI (`cmd/mcp-azahar`, Cobra)
 Build and test the CLI before the MCP layer. Commands:
@@ -184,10 +191,12 @@ stable; check its docs for current API). stdio transport.
   and release binaries), CLI quickstart, sequence file format, MCP setup
   for Claude Code (`claude mcp add ...`) and Claude Desktop (JSON), a note
   that agents can also use the CLI directly via bash, license section
-  (GPL-3.0-or-later). Security note: RPC is unauthenticated, localhost
-  only, never expose it.
-- goreleaser for linux/amd64+arm64, darwin, windows (capture backend may
-  be Linux-only at first; document it). Include LICENSE in archives.
+  (GPL-3.0-or-later). Security note: RPC is unauthenticated and Azahar
+  binds it to all interfaces on a fixed port; explain how mcp-azahar keeps
+  it off the network and never expose it.
+- goreleaser for linux/amd64+arm64, darwin, windows (`launch` with Xvfb
+  is Linux-first; `attach` and screenshots via RPC work everywhere;
+  document it). Include LICENSE in archives.
 - GitHub Actions: lint + unit tests on every push; integration tests in a
   job with Xvfb + Azahar + fixture built in the devkitarm image.
 
@@ -198,5 +207,5 @@ connected via `serve` can launch the fixture, press buttons, see both
 screens, and verify state via `read_symbol`.
 
 ## Out of scope (note in NOTES.md, don't build)
-Upstream Azahar changes (e.g. an RPC screenshot command) — draft a feature
-request text in `docs/upstream-proposal.md` instead.
+Upstream Azahar changes (e.g. a configurable RPC port and bind address) —
+draft a feature request text in `docs/upstream-proposal.md` instead.

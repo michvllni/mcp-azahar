@@ -7,8 +7,9 @@ at the top of each section.
 - Phase 0 (tooling and skeleton): done except devkitPro (see "Blockers").
   The dev container runs Debian trixie (maintainer: assume trixie from now
   on).
-- Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. Two decisions
-  for the maintainer before Phase 3/4 (see "Open questions"). Next: Phase 2.
+- Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. D4 decided
+  (RPC screenshots). Parallel sessions/RPC isolation is deferred until
+  before Phase 3 (see "Open questions"). Next: Phase 2.
 
 ## Blockers
 
@@ -82,7 +83,7 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - **RPC has TakeScreenshot/ReadScreenshot** (PNG or raw RGB). With
   `layout_option=1` it returns the top screen (400x240) or, with the
   secondary flag, the bottom screen (320x240), so no cropping is needed.
-  This removes the premise of DECISIONS.md D4 (X11 capture).
+  The maintainer then switched D4 to RPC screenshots (2026-11-18).
 - RPC starts only after an app is loaded and is recreated by LoadState
   (in-flight request lost, selected process reset).
 - WriteMemory replies empty even when it refuses the address; unmapped
@@ -151,6 +152,10 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - Integration-test job deferred until the fixture exists (Phase 7).
 
 ## Deviations from PLAN.md
+- Screenshots use Azahar's RPC instead of X11 capture (DECISIONS.md D4,
+  PLAN Phase 4 updated). Phase 2 keeps the RPC transport behind an
+  interface so a per-session relay (parallel-sessions question) can plug in
+  without changing the client.
 - Base image changed from bookworm to trixie (maintainer decision), see
   "Resolved" above.
 - Tool versions (golangci-lint, goreleaser, actionlint) are pinned in
@@ -173,11 +178,7 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   pause/resume, frame advance, reset and shutdown requests.
 
 ## Open questions
-- **D4 (screenshots):** use Azahar's RPC screenshot command as the default
-  `Capturer` backend instead of X11 capture? It works headless, returns
-  exact per-screen images, and is cross-platform. Proposal: RPC backend
-  only; X11 capture dropped or kept as fallback. Needs a DECISIONS.md update.
-- **Parallel sessions:** Azahar's RPC port is fixed (45987) on all
+- **Parallel sessions (deferred by the maintainer; decide before Phase 3):** Azahar's RPC port is fixed (45987) on all
   interfaces. Options: (a) one network namespace per session (unprivileged
   `unshare --user --net`), with mcp-azahar reaching it through a small relay
   over a Unix socket in the session dir, which also keeps RPC off the
