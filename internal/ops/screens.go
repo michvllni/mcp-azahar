@@ -43,14 +43,24 @@ type SavedFile struct {
 
 // SaveScreenshot writes shots to path: one image (both screens composed in
 // 3DS arrangement), or with split one file per screen named
-// <path without extension>-<screen>.png.
-func SaveScreenshot(shots []capture.Shot, path string, split bool) ([]SavedFile, error) {
+// <path without extension>-<screen>.png. check, if not nil, vets every
+// file name before it is written and returns the path to use.
+func SaveScreenshot(shots []capture.Shot, path string, split bool, check func(string) (string, error)) ([]SavedFile, error) {
+	write := func(p string, b []byte) (string, error) {
+		if check != nil {
+			var err error
+			if p, err = check(p); err != nil {
+				return "", err
+			}
+		}
+		return p, os.WriteFile(p, b, 0o644)
+	}
 	if split && len(shots) > 1 {
 		base := strings.TrimSuffix(path, filepath.Ext(path))
 		files := make([]SavedFile, 0, len(shots))
 		for _, s := range shots {
-			p := base + "-" + s.Screen + ".png"
-			if err := os.WriteFile(p, s.PNG, 0o644); err != nil {
+			p, err := write(base+"-"+s.Screen+".png", s.PNG)
+			if err != nil {
 				return nil, err
 			}
 			files = append(files, SavedFile{p, s.Screen, s.Width, s.Height})
@@ -61,7 +71,7 @@ func SaveScreenshot(shots []capture.Shot, path string, split bool) ([]SavedFile,
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	if path, err = write(path, b); err != nil {
 		return nil, err
 	}
 	screen := shots[0].Screen

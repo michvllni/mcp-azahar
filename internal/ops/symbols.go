@@ -26,6 +26,8 @@ type ValueOptions struct {
 	// Len is the byte count for string/bytes, or to override a symbol's
 	// size when it has no type.
 	Len int
+	// MaxSize, if set, refuses targets of more bytes.
+	MaxSize int
 }
 
 // Value is a read and decoded target.
@@ -107,7 +109,8 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 		if size == 0 {
 			size = opts.Len
 		}
-		return &target{expr, addr, size, string(typ), func(b []byte) (any, error) { return symbols.DecodeScalar(b, typ) }}, nil
+		tg := &target{expr, addr, size, string(typ), func(b []byte) (any, error) { return symbols.DecodeScalar(b, typ) }}
+		return tg, o.checkSize(tg, opts)
 	}
 	t, err := o.table(name, opts.ELF)
 	if err != nil {
@@ -139,7 +142,7 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 	if tg.size <= 0 {
 		return nil, usage("size of %q unknown: pass --type (and --len for string/bytes)", expr)
 	}
-	return tg, nil
+	return tg, o.checkSize(tg, opts)
 }
 
 // CheckCondition validates a target and condition without touching the
@@ -166,6 +169,13 @@ func (o *Ops) CheckCondition(name, expr string, cond Condition, opts ValueOption
 	}
 	_, err = Compare(zero, zero, cond)
 	return err
+}
+
+func (o *Ops) checkSize(tg *target, opts ValueOptions) error {
+	if opts.MaxSize > 0 && tg.size > opts.MaxSize {
+		return usage("%q is %d bytes, over %d: read a field, an element or fewer bytes", tg.desc, tg.size, opts.MaxSize)
+	}
+	return nil
 }
 
 // isNumberish reports whether expr looks like an address, not a symbol.

@@ -15,9 +15,10 @@ be committed.
 
 ## Structure
 ```
-cmd/mcp-azahar/      thin Cobra CLI over internal/ops (later also `serve` for
-                     MCP); main.go holds `const version`, root.go global
-                     flags and exit codes, commands.go the commands
+cmd/mcp-azahar/      thin Cobra CLI over internal/ops plus `serve` (MCP);
+                     main.go holds `const version`, root.go global flags
+                     and exit codes, commands.go/scripting.go the commands,
+                     parity_test.go checks every command has an MCP tool
 internal/            all behavior; CLI and MCP call the same functions
   rpc/               Azahar RPC client (protocol v2, docs/PROTOCOL.md)
     fakeserver/      in-process fake Azahar RPC server for tests
@@ -29,6 +30,8 @@ internal/            all behavior; CLI and MCP call the same functions
                      their committed ARM ELFs
   sequence/          YAML/JSON scripted tests (sequence command)
   ops/               every user-facing operation, shared by CLI and MCP
+  server/            MCP server (official go-sdk, stdio): one tool per
+                     CLI command, `Spec.CLI` names the counterpart
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh,
                      build-testdata.sh (rebuilds the committed test ELFs)
@@ -40,7 +43,6 @@ docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
-Planned packages (see PLAN.md): `internal/server`.
 
 ## Build, test, lint
 ```sh
@@ -120,7 +122,17 @@ goreleaser check && goreleaser build --snapshot --clean
   `scripts/build-testdata.sh` (ARM toolchain in the dev container); commit
   source and binary together.
 - Sequence steps map 1:1 to ops calls; a new CLI command that makes sense
-  in a script also gets a sequence action (and later an MCP tool).
+  in a script also gets a sequence action, and every CLI command gets an
+  MCP tool in `internal/server` (or an entry in `cliOnly` in
+  `parity_test.go` with the reason). Tool descriptions state units,
+  ranges and formats; MCP durations are milliseconds.
+- `serve` owns stdout for JSON-RPC: nothing in ops or server may print.
+- Every file an MCP tool reads or writes goes through `Server.path`
+  (DECISIONS.md D11): direct arguments, sequence paths via
+  `sequence.Options.CheckPath`, and derived names (split screenshots) via
+  the `check` argument of `ops.SaveScreenshot`. Results stay bounded (see
+  the limits in `internal/server`). A new CLI flag needs a tool property or an entry
+  in `flagOnly` in `parity_test.go`.
 - Input state held across commands lives in the session file (`Held`):
   Azahar replaces the whole input on every SetInput, and each CLI call is a
   separate process.

@@ -602,14 +602,14 @@ func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
 
 // DecodeAt decodes memory read for loc (handles bitfields).
 func (t *Table) DecodeAt(b []byte, loc Location) (any, error) {
+	if len(b) > MaxDecodeSize {
+		return nil, fmt.Errorf("value of %d bytes is too large to decode (max %d); read a field, an element or raw memory", len(b), MaxDecodeSize)
+	}
 	if loc.Type == nil {
 		return fmt.Sprintf("%x", b), nil
 	}
 	if loc.BitSize > 0 {
 		return bitfield(b, loc.BitOffset, loc.BitSize, loc.Type), nil
-	}
-	if len(b) > MaxDecodeSize {
-		return nil, fmt.Errorf("value of %d bytes is too large to decode (max %d); read a field, an element or raw memory", len(b), MaxDecodeSize)
 	}
 	return t.decode(b, loc.Type)
 }

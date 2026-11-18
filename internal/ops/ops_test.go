@@ -563,11 +563,11 @@ func TestSaveScreenshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	files, err := ops.SaveScreenshot(shots, filepath.Join(dir, "s.png"), false)
+	files, err := ops.SaveScreenshot(shots, filepath.Join(dir, "s.png"), false, nil)
 	if err != nil || len(files) != 1 || files[0].Screen != "both" || files[0].Height != 480 {
 		t.Fatalf("composite: %+v, %v", files, err)
 	}
-	files, err = ops.SaveScreenshot(shots, filepath.Join(dir, "x.png"), true)
+	files, err = ops.SaveScreenshot(shots, filepath.Join(dir, "x.png"), true, nil)
 	if err != nil || len(files) != 2 || !strings.HasSuffix(files[1].Path, "x-bottom.png") {
 		t.Fatalf("split: %+v, %v", files, err)
 	}

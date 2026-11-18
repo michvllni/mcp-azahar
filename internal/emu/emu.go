@@ -449,9 +449,19 @@ func (m *Manager) Attach(ctx context.Context, name string, opts AttachOptions) (
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return nil, fmt.Errorf("RPC address %q: %w", addr, err)
 	}
+	logPath := opts.LogPath
+	if logPath != "" {
+		// Absolute, so CLI and MCP server calls from other directories
+		// find it too.
+		abs, err := filepath.Abs(logPath)
+		if err != nil {
+			return nil, err
+		}
+		logPath = abs
+	}
 	s := &session.Session{
 		Name: name, Kind: session.KindAttached, CreatedAt: time.Now().UTC(),
-		RPC: session.Endpoint{Network: "udp", Address: addr}, LogPath: opts.LogPath,
+		RPC: session.Endpoint{Network: "udp", Address: addr}, LogPath: logPath,
 	}
 	if opts.ELF != "" {
 		elf, err := checkFile(opts.ELF, "ELF")
