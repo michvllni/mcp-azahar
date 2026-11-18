@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package ops
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/michvllni/mcp-azahar/internal/capture"
+	"github.com/michvllni/mcp-azahar/internal/emu"
+	"github.com/michvllni/mcp-azahar/internal/rpc"
+)
+
+// Screenshot captures one or both screens (Both: two consecutive frames).
+func (o *Ops) Screenshot(ctx context.Context, name string, req capture.Request) ([]capture.Shot, error) {
+	if req.Scale < 0 || req.Scale > rpc.MaxScreenshotScale {
+		return nil, usage("scale %d outside 0..%d", req.Scale, rpc.MaxScreenshotScale)
+	}
+	l := o.locksFor(name)
+	l.shot.Lock()
+	defer l.shot.Unlock()
+	_, c, err := o.client(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = c.Close() }()
+	return capture.RPC{Client: c}.Capture(ctx, req)
+}
+
+// SavedFile is a written screenshot.
+type SavedFile struct {
+	Path   string `json:"path"`
+	Screen string `json:"screen"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+// SaveScreenshot writes shots to path: one image (both screens composed in
+// 3DS arrangement), or with split one file per screen named
+// <path without extension>-<screen>.png.
+func SaveScreenshot(shots []capture.Shot, path string, split bool) ([]SavedFile, error) {
+	if split && len(shots) > 1 {
+		base := strings.TrimSuffix(path, filepath.Ext(path))
+		files := make([]SavedFile, 0, len(shots))
+		for _, s := range shots {
+			p := base + "-" + s.Screen + ".png"
+			if err := os.WriteFile(p, s.PNG, 0o644); err != nil {
+				return nil, err
+			}
+			files = append(files, SavedFile{p, s.Screen, s.Width, s.Height})
+		}
+		return files, nil
+	}
+	b, w, h, err := capture.Compose(shots)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return nil, err
+	}
+	screen := shots[0].Screen
+	if len(shots) > 1 {
+		screen = "both"
+	}
+	return []SavedFile{{path, screen, w, h}}, nil
+}
+
+// --- save states ----------------------------------------------------------
+
+// SaveState saves to slot 0..10.
+func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
+	if slot < 0 || slot >= rpc.SaveStateSlots {
+		return usage("slot %d outside 0..%d", slot, rpc.SaveStateSlots-1)
+	}
+	_, c, err := o.client(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	return c.SaveState(ctx, slot)
+}
+
+// LoadState loads slot 0..10. For launched sessions it first checks that
+// the slot has a state: an empty slot leaves Azahar stuck behind a modal
+// dialog (PROTOCOL.md §5.7). Afterwards it sends the held input again,
+// since the load may have reset Azahar's input override.
+func (o *Ops) LoadState(ctx context.Context, name string, slot int) error {
+	if slot < 0 || slot >= rpc.SaveStateSlots {
+		return usage("slot %d outside 0..%d", slot, rpc.SaveStateSlots-1)
+	}
+	l := o.locksFor(name)
+	l.state.Lock()
+	defer l.state.Unlock()
+	s, c, err := o.client(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	if exists, known := emu.HasState(s, slot); known && !exists {
+		return usage("slot %d has no save state in session %q", slot, name)
+	}
+	if err := c.LoadState(ctx, slot); err != nil {
+		return err
+	}
+	l.input.Lock()
+	defer l.input.Unlock()
+	_, err = o.applyHeld(ctx, name, c)
+	return err
+}

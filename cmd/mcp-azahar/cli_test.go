@@ -67,7 +67,7 @@ func TestCLIWorkflow(t *testing.T) {
 		t.Fatalf("status: %q", out)
 	}
 	c.ok("hold", "l")
-	if out := c.ok("press", "a", "--hold", "20ms"); !strings.Contains(out, "pressed A") || !strings.Contains(out, "held now: L") {
+	if out := c.ok("press", "a", "--for", "20ms"); !strings.Contains(out, "pressed A") || !strings.Contains(out, "held now: L") {
 		t.Fatalf("press: %q", out)
 	}
 	c.ok("touch", "160", "120", "--hold")
@@ -140,6 +140,15 @@ func TestCLIExitCodes(t *testing.T) {
 		{[]string{"-s", "x", "write", "0x1FF80000", "ff"}, exitError}, // not applied
 		{[]string{"-s", "x", "logs"}, exitError},                      // attached without --log
 		{[]string{"-s", "x", "status"}, exitOK},
+		{[]string{"frobnicate"}, exitUsage},                             // unknown command
+		{[]string{"-s", "x", "state"}, exitUsage},                       // no action
+		{[]string{"-s", "x", "state", "foo"}, exitUsage},                // unknown action
+		{[]string{"-s", "x", "screenshot", "--scale", "99"}, exitUsage}, // scale
+		{[]string{"-s", "x", "screenshot", "--split"}, exitUsage},       // split needs both
+		{[]string{"-s", "x", "logs", "--tail", "-1"}, exitUsage},        // negative tail
+		{[]string{"-s", "x", "press", "a", "--for", "-1s"}, exitUsage},  // negative duration
+		{[]string{"-s", "x", "read", "0", "4", "--format", "raw", "--json"}, exitUsage},
+		{[]string{"-s", "x", "write", "0x101000", "12", "3", "4"}, exitUsage}, // odd groups
 	} {
 		if code, _, errOut := c.run(tc.args...); code != tc.code {
 			t.Errorf("%v: exit %d, want %d (stderr %q)", tc.args, code, tc.code, errOut)
@@ -149,12 +158,12 @@ func TestCLIExitCodes(t *testing.T) {
 
 func TestCLIJSON(t *testing.T) {
 	c := newCLI(t)
-	var s session.Session
+	var s ops.SessionView
 	if err := json.Unmarshal([]byte(c.ok("attach", "--address", c.srv.Addr(), "--json")), &s); err != nil || s.RPC.Address != c.srv.Addr() {
 		t.Fatalf("attach --json: %+v, %v", s, err)
 	}
 	var r ops.InputResult
-	if err := json.Unmarshal([]byte(c.ok("hold", "a", "b", "--json")), &r); err != nil || strings.Join(r.HeldButtons, ",") != "A,B" {
+	if err := json.Unmarshal([]byte(c.ok("hold", "a", "b", "--json")), &r); err != nil || strings.Join(r.Held.Buttons, ",") != "A,B" {
 		t.Fatalf("hold --json: %+v, %v", r, err)
 	}
 	var v map[string]string
@@ -169,5 +178,31 @@ func TestSessionFromEnv(t *testing.T) {
 	c.ok("attach", "--address", c.srv.Addr())
 	if _, err := c.o.M.Store.Load("fromenv"); err != nil {
 		t.Fatalf("session from $MCP_AZAHAR_SESSION not used: %v", err)
+	}
+}
+
+func TestCLIStatusNotAnswering(t *testing.T) {
+	c := newCLI(t)
+	c.ok("attach", "--address", c.srv.Addr())
+	_ = c.srv.Close()
+	code, out, errOut := c.run("status")
+	if code != exitError || !strings.Contains(out, "RPC not answering") || !strings.Contains(errOut, "not answering") {
+		t.Fatalf("exit %d, out %q, err %q", code, out, errOut)
+	}
+}
+
+func TestCLIJSONShapes(t *testing.T) {
+	c := newCLI(t)
+	c.ok("attach", "--address", c.srv.Addr())
+	var st map[string]any
+	if err := json.Unmarshal([]byte(c.ok("status", "--json")), &st); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st["processes"].([]any); !ok {
+		t.Fatalf("processes is not an array: %v", st["processes"])
+	}
+	held := st["session"].(map[string]any)["held"].(map[string]any)
+	if b, ok := held["buttons"].([]any); !ok || len(b) != 0 {
+		t.Fatalf("held buttons must be an empty array: %v", held["buttons"])
 	}
 }

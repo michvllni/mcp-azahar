@@ -39,7 +39,8 @@ func exitCode(err error) int {
 		return exitOK
 	case errors.Is(err, ops.ErrCheckFailed):
 		return exitCheck
-	case errors.Is(err, ops.ErrUsage), errors.As(err, &flagErr):
+	case errors.Is(err, ops.ErrUsage), errors.As(err, &flagErr),
+		strings.HasPrefix(err.Error(), "unknown command"):
 		return exitUsage
 	case errors.Is(err, session.ErrNotFound):
 		return exitNoTarget
@@ -196,7 +197,7 @@ Fails if the session exists or another emulator holds the RPC port.`,
 			}
 			return a.print(cmd.OutOrStdout(), s, func(w io.Writer) {
 				_, _ = fmt.Fprintf(w, "session %q running: azahar pid %d on display %s, RPC %s\n",
-					s.Name, s.Azahar.PID, s.Display, s.RPC.Address)
+					s.Name, s.AzaharPID, s.Display, s.RPC.Address)
 			})
 		},
 	}
@@ -262,22 +263,21 @@ Fails if the session exists or another emulator holds the RPC port.`,
 			ctx, cancel := a.ctx(cmd, 15*time.Second)
 			defer cancel()
 			st, err := o.Status(ctx, a.session)
-			if err != nil {
-				return err
+			if st.Session.Name == "" {
+				return err // no session at all
 			}
-			if err := a.print(cmd.OutOrStdout(), st, func(w io.Writer) {
+			if perr := a.print(cmd.OutOrStdout(), st, func(w io.Writer) {
 				s := st.Session
 				state := "running"
-				if !st.Running {
+				switch {
+				case !st.Running:
 					state = "not running"
+				case !st.Answering:
+					state = "running, RPC not answering: " + st.RPCError
 				}
-				_, _ = fmt.Fprintf(w, "session %q (%s): %s\nRPC: %s", s.Name, s.Kind, state, s.RPC.Address)
-				if st.RPCError != "" {
-					_, _ = fmt.Fprintf(w, " (not answering: %s)", st.RPCError)
-				}
-				_, _ = fmt.Fprintln(w)
+				_, _ = fmt.Fprintf(w, "session %q (%s): %s\nRPC: %s\n", s.Name, s.Kind, state, s.RPC.Address)
 				for _, p := range st.Processes {
-					_, _ = fmt.Fprintf(w, "process %d %q title %016X\n", p.PID, p.Name, p.TitleID)
+					_, _ = fmt.Fprintf(w, "process %d %q title %s\n", p.PID, p.Name, p.TitleID)
 				}
 				if s.AppPath != "" {
 					_, _ = fmt.Fprintf(w, "app: %s\n", s.AppPath)
@@ -285,13 +285,11 @@ Fails if the session exists or another emulator holds the RPC port.`,
 				if s.LogPath != "" {
 					_, _ = fmt.Fprintf(w, "log: %s\n", s.LogPath)
 				}
-			}); err != nil {
-				return err
+				_, _ = fmt.Fprintf(w, "held input: %s\n", describeHeld(s.Held))
+			}); perr != nil {
+				return perr
 			}
-			if !st.Running || st.RPCError != "" {
-				return fmt.Errorf("%w: session %q is not answering", session.ErrNotFound, a.session)
-			}
-			return nil
+			return err
 		},
 	}
 

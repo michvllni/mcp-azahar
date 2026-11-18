@@ -4,10 +4,9 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,8 +33,8 @@ func inputCommands(a *app) []*cobra.Command {
 	press := &cobra.Command{
 		Use:     "press <button>...",
 		Short:   "Press buttons briefly, then let go",
-		Long:    "Press buttons for --hold (default 100ms), then return to the held input.\n\n" + inputHelp,
-		Example: "  mcp-azahar press A\n  mcp-azahar press L R --hold 500ms",
+		Long:    "Press buttons for --for (default 100ms), then return to the held input.\n\n" + inputHelp,
+		Example: "  mcp-azahar press A\n  mcp-azahar press L R --for 500ms",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			in, err := ops.ParseButtons(args)
@@ -46,7 +45,7 @@ func inputCommands(a *app) []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := a.ctx(cmd, pressFor+30*time.Second)
+			ctx, cancel := a.ctx(cmd, max(pressFor, 0)+30*time.Second)
 			defer cancel()
 			r, err := o.Press(ctx, a.session, in, pressFor)
 			if err != nil {
@@ -55,7 +54,7 @@ func inputCommands(a *app) []*cobra.Command {
 			return printInput(cmd, "pressed "+strings.Join(upper(args), "+"), r)
 		},
 	}
-	press.Flags().DurationVar(&pressFor, "hold", ops.DefaultPress, "how long to keep the buttons pressed")
+	press.Flags().DurationVar(&pressFor, "for", ops.DefaultPress, "how long to keep the buttons pressed")
 
 	hold := &cobra.Command{
 		Use:   "hold <button>...",
@@ -124,7 +123,7 @@ func inputCommands(a *app) []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := a.ctx(cmd, touchFor+30*time.Second)
+			ctx, cancel := a.ctx(cmd, max(touchFor, 0)+30*time.Second)
 			defer cancel()
 			r, err := o.Touch(ctx, a.session, x, y, touchHold, touchFor)
 			if err != nil {
@@ -152,7 +151,7 @@ func inputCommands(a *app) []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := a.ctx(cmd, padFor+30*time.Second)
+			ctx, cancel := a.ctx(cmd, max(padFor, 0)+30*time.Second)
 			defer cancel()
 			r, err := o.CirclePad(ctx, a.session, x, y, padHold, padFor)
 			if err != nil {
@@ -174,8 +173,8 @@ func upper(s []string) []string {
 	return out
 }
 
-func describeHeld(in rpc.Input) string {
-	parts := in.Buttons.Names()
+func describeHeld(in ops.InputView) string {
+	parts := append([]string{}, in.Buttons...)
 	if in.Home {
 		parts = append(parts, "HOME")
 	}
@@ -214,7 +213,8 @@ func screenshotCommand(a *app) *cobra.Command {
 		Short: "Save a PNG of the top, bottom or both screens",
 		Long: `Capture the next rendered frame through Azahar's RPC. --screen both takes two
 consecutive frames (top, then bottom) and writes them as one image in 3DS
-arrangement, or as <name>-top.png and <name>-bottom.png with --split.`,
+arrangement, or as <name>-top.png and <name>-bottom.png with --split.
+An existing output file is overwritten.`,
 		Example: "  mcp-azahar screenshot -o shot.png\n  mcp-azahar screenshot --screen both --scale 2",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -222,44 +222,25 @@ arrangement, or as <name>-top.png and <name>-bottom.png with --split.`,
 			if err != nil {
 				return usageErr("%v", err)
 			}
+			if split && sc != capture.Both {
+				return usageErr("--split needs --screen both")
+			}
 			if out == "" {
-				out = fmt.Sprintf("screenshot-%s-%s.png", a.session, time.Now().Format("20060102-150405"))
+				out = fmt.Sprintf("screenshot-%s-%s.png", a.session, time.Now().Format("20060102-150405.000"))
 			}
 			o, err := a.open()
 			if err != nil {
 				return err
 			}
-			ctx, cancel := a.ctx(cmd, 45*time.Second)
+			ctx, cancel := a.ctx(cmd, 90*time.Second)
 			defer cancel()
 			shots, err := o.Screenshot(ctx, a.session, capture.Request{Screens: sc, Scale: scale})
 			if err != nil {
 				return err
 			}
-			type file struct {
-				Path   string `json:"path"`
-				Screen string `json:"screen"`
-				Width  int    `json:"width"`
-				Height int    `json:"height"`
-			}
-			var files []file
-			if split && len(shots) > 1 {
-				base := strings.TrimSuffix(out, filepath.Ext(out))
-				for _, s := range shots {
-					p := base + "-" + s.Screen + ".png"
-					if err := os.WriteFile(p, s.PNG, 0o644); err != nil {
-						return err
-					}
-					files = append(files, file{p, s.Screen, s.Width, s.Height})
-				}
-			} else {
-				b, w, h, err := capture.Compose(shots)
-				if err != nil {
-					return err
-				}
-				if err := os.WriteFile(out, b, 0o644); err != nil {
-					return err
-				}
-				files = append(files, file{out, sc.String(), w, h})
+			files, err := ops.SaveScreenshot(shots, out, split)
+			if err != nil {
+				return err
 			}
 			return a.print(cmd.OutOrStdout(), map[string]any{"files": files}, func(w io.Writer) {
 				for _, f := range files {
@@ -277,36 +258,30 @@ arrangement, or as <name>-top.png and <name>-bottom.png with --split.`,
 
 // --- memory ---------------------------------------------------------------
 
-// parseAddr parses an address: 0x-prefixed hex or decimal.
-func parseAddr(s string) (uint32, error) {
-	v, err := strconv.ParseUint(strings.ReplaceAll(s, "_", ""), 0, 32)
-	if err != nil {
-		return 0, usageErr("address %q: use hex like 0x00100000 or decimal", s)
-	}
-	return uint32(v), nil
-}
-
 func memoryCommands(a *app) []*cobra.Command {
 	var format string
 	read := &cobra.Command{
 		Use:   "read <address> <length>",
 		Short: "Read emulated memory of the app",
-		Long: `Read <length> bytes at the virtual address (hex 0x... or decimal) of the app's
-process. Unmapped memory reads as zeros. --format hex (default), dump (hex
-dump with addresses) or raw (bytes to stdout).`,
+		Long: `Read <length> bytes at the virtual address of the app's process. Numbers are
+hex with 0x or decimal. Unmapped memory reads as zeros. --format hex (default),
+dump (hex dump with addresses) or raw (bytes to stdout; not with --json).`,
 		Example: "  mcp-azahar read 0x00100000 16 --format dump",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			addr, err := parseAddr(args[0])
+			addr, err := ops.ParseAddress(args[0])
 			if err != nil {
 				return err
 			}
-			n, err := strconv.Atoi(args[1])
+			n, err := ops.ParseLength(args[1])
 			if err != nil {
-				return usageErr("length %q is not an integer", args[1])
+				return err
 			}
-			if format != "hex" && format != "dump" && format != "raw" {
+			switch {
+			case format != "hex" && format != "dump" && format != "raw":
 				return usageErr("--format must be hex, dump or raw")
+			case format == "raw" && a.json:
+				return usageErr("--format raw cannot be combined with --json")
 			}
 			o, err := a.open()
 			if err != nil {
@@ -325,36 +300,35 @@ dump with addresses) or raw (bytes to stdout).`,
 			switch format {
 			case "raw":
 				_, err = w.Write(b)
-				return err
 			case "dump":
-				d := hex.Dumper(&offsetWriter{w: w, base: addr})
-				_, _ = d.Write(b)
-				return d.Close()
+				_, err = io.WriteString(w, ops.HexDump(b, addr))
+			default:
+				_, err = fmt.Fprintln(w, hex.EncodeToString(b))
 			}
-			_, err = fmt.Fprintln(w, hex.EncodeToString(b))
 			return err
 		},
 	}
 	read.Flags().StringVar(&format, "format", "hex", "hex, dump or raw")
 
 	write := &cobra.Command{
-		Use:   "write <address> <hex-bytes>",
+		Use:   "write <address> <hex-bytes>...",
 		Short: "Write bytes to emulated memory and verify them",
-		Long: `Write bytes (hex, spaces allowed) at the virtual address and read them back.
+		Long: `Write bytes at the virtual address and read them back. Bytes are hex in memory
+order ("de ad be ef", "deadbeef", "0xde 0xad"); every group needs an even number
+of digits, and 0x1234 means the bytes 12 34, not a little-endian number.
 Azahar ignores writes outside the app's image and heaps; that is reported as an
 error. A write of bytes equal to what the memory already holds cannot be told
 apart from an ignored one.`,
 		Example: "  mcp-azahar write 0x00101000 'de ad be ef'",
 		Args:    cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			addr, err := parseAddr(args[0])
+			addr, err := ops.ParseAddress(args[0])
 			if err != nil {
 				return err
 			}
-			h := strings.NewReplacer(" ", "", ":", "", "0x", "").Replace(strings.Join(args[1:], ""))
-			data, err := hex.DecodeString(h)
+			data, err := ops.ParseBytes(args[1:]...)
 			if err != nil {
-				return usageErr("bytes %q are not hex: %v", strings.Join(args[1:], " "), err)
+				return err
 			}
 			o, err := a.open()
 			if err != nil {
@@ -373,43 +347,16 @@ apart from an ignored one.`,
 	return []*cobra.Command{read, write}
 }
 
-// offsetWriter rewrites hex.Dumper's offsets to start at base.
-type offsetWriter struct {
-	w    io.Writer
-	base uint32
-	line []byte
-}
-
-func (o *offsetWriter) Write(p []byte) (int, error) {
-	for _, c := range p {
-		o.line = append(o.line, c)
-		if c == '\n' {
-			if err := o.flush(); err != nil {
-				return 0, err
-			}
-		}
-	}
-	return len(p), nil
-}
-
-func (o *offsetWriter) flush() error {
-	l := string(o.line)
-	o.line = o.line[:0]
-	if len(l) >= 8 {
-		if off, err := strconv.ParseUint(l[:8], 16, 32); err == nil {
-			l = fmt.Sprintf("%08x", uint32(off)+o.base) + l[8:]
-		}
-	}
-	_, err := io.WriteString(o.w, l)
-	return err
-}
-
 // --- save states ----------------------------------------------------------
 
 func stateCommand(a *app) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "state",
 		Short: "Save or load emulator save states (slots 0-10)",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return usageErr("use `state save <slot>` or `state load <slot>`")
+		},
 	}
 	for _, action := range []string{"save", "load"} {
 		c.AddCommand(&cobra.Command{
@@ -418,7 +365,7 @@ func stateCommand(a *app) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				slot, err := strconv.Atoi(args[0])
-				if err != nil || slot < 0 || slot >= rpc.SaveStateSlots {
+				if err != nil {
 					return usageErr("slot %q: use 0-%d", args[0], rpc.SaveStateSlots-1)
 				}
 				o, err := a.open()
@@ -453,26 +400,36 @@ func logsCommand(a *app) *cobra.Command {
 		Use:   "logs",
 		Short: "Show Azahar's log for the session",
 		Long: `Print Azahar's log (filtered with --contains, last lines with --tail). --follow
-keeps printing new lines until interrupted or --timeout.`,
+prints the last --tail lines (none by default) and then new lines until
+interrupted, --timeout, or the session's emulator stops; with --json it prints
+one {"line": ...} object per line.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := a.open()
 			if err != nil {
 				return err
 			}
+			w := cmd.OutOrStdout()
 			if follow {
 				ctx, cancel := a.ctx(cmd, 0)
 				defer cancel()
-				return o.FollowLogs(ctx, a.session, q, cmd.OutOrStdout())
+				enc := json.NewEncoder(w)
+				return o.FollowLogs(ctx, a.session, q, func(l string) error {
+					if a.json {
+						return enc.Encode(map[string]string{"line": l})
+					}
+					_, err := fmt.Fprintln(w, l)
+					return err
+				})
 			}
 			ctx, cancel := a.ctx(cmd, time.Minute)
 			defer cancel()
-			lines, err := o.Logs(ctx, a.session, q)
+			res, err := o.Logs(ctx, a.session, q)
 			if err != nil {
 				return err
 			}
-			return a.print(cmd.OutOrStdout(), map[string]any{"lines": lines}, func(w io.Writer) {
-				for _, l := range lines {
+			return a.print(w, res, func(w io.Writer) {
+				for _, l := range res.Lines {
 					_, _ = fmt.Fprintln(w, l)
 				}
 			})
