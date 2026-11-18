@@ -96,6 +96,12 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   host libraries, non-root user `azahar`, workdir `/work`, entrypoint
   `mcp-azahar`, default command `serve`. Label
   `io.modelcontextprotocol.server.name` for the MCP Registry (D10).
+- System libraries Azahar's bundle loads (22 sonames): the `DT_NEEDED`
+  entries of `AppRun.wrapped` and of every `.so` in `/opt/azahar` that
+  the bundle does not ship itself, mapped with `dpkg -S`. Several
+  (`libcom_err.so.2`, `libgmp`, `libICE`/`libSM`, `libwayland-client`)
+  came only as dependencies of curl/git in the CI container, so the image
+  and the CI job list them all explicitly. Recompute after an Azahar bump.
 - GPL: `scripts/azahar-source.sh` downloads Azahar's
   `azahar-unified-source-2127.0-rc3.tar.xz` (41 MiB, digest pinned as
   `AZAHAR_SOURCE_SHA256`), the release attaches it, and the image ships

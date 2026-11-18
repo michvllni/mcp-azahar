@@ -23,8 +23,9 @@ RUN /tmp/install-azahar.sh -t "${AZAHAR_VERSION}" -s "${AZAHAR_SHA256}" -d /opt/
 
 FROM ${BASE}
 ARG TARGETPLATFORM
-# Xvfb + Mesa and the host libraries Azahar's bundle expects (same list as
-# .devcontainer/Dockerfile, without the development tools).
+# Xvfb + Mesa and every library Azahar's bundle loads from the system (the
+# DT_NEEDED entries of AppRun.wrapped and its bundled libraries that the
+# bundle does not ship; NOTES.md Phase 8a lists how to recompute them).
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       xvfb xauth libgl1-mesa-dri libegl1 libxkbcommon-x11-0 \
@@ -32,6 +33,8 @@ RUN apt-get update \
       libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
       libfontconfig1 libdbus-1-3 libopengl0 libharfbuzz0b libjack-jackd2-0 \
       libasound2t64 libfribidi0 libusb-1.0-0 \
+      libcom-err2 libgmp10 libice6 libsm6 libwayland-client0 libfreetype6 \
+      libgbm1 libgl1 libglx0 libx11-6 libx11-xcb1 libxcb1 libxcb-dri3-0 libdrm2 zlib1g \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=azahar /opt/azahar /opt/azahar
 COPY ${TARGETPLATFORM}/mcp-azahar /usr/local/bin/mcp-azahar
