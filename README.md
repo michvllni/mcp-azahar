@@ -4,10 +4,10 @@ Unofficial MCP server and CLI for the Azahar 3DS emulator: automate testing of 3
 > **Unofficial.** This project is not affiliated with or endorsed by the
 > [Azahar](https://github.com/azahar-emu/azahar) project.
 
-**Status:** feature-complete for v0.1 ([docs/PLAN.md](docs/PLAN.md) phases
-0–8): CLI, MCP server, scripted tests, integration tests against Azahar in CI,
-and release packaging (binaries, container image, npm, MCP Registry). The first
-release is pending. Current status and open questions: [NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
+**Status:** [v0.1.0](https://github.com/michvllni/mcp-azahar/releases/tag/v0.1.0)
+is released ([docs/PLAN.md](docs/PLAN.md) phases 0–8 done): CLI, MCP server,
+scripted tests, integration tests against Azahar in CI; binaries, container
+image, npm packages and the MCP Registry entry. Current status and open questions: [NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
 documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## What it does
@@ -50,8 +50,7 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
   `{"command": "npx", "args": ["-y", "mcp-azahar"]}`. You still need Azahar
   (and Xvfb for headless `launch`) on the host.
 - **MCP Registry**: published as `io.github.michvllni/mcp-azahar` (npm and
-  container packages) from the first release on, so registry-aware clients
-  can install it by name.
+  container packages), so registry-aware clients can install it by name.
 - **Release binaries**: archives for Linux, macOS and Windows (amd64, arm64)
   on the [releases page](https://github.com/michvllni/mcp-azahar/releases).
 - **Go**: `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.
@@ -260,15 +259,12 @@ notes. It fails without uploading anything if
 
 In that case delete the release and its tag, fix the cause and publish
 again. `mcp-azahar version` (or `--version`) prints the version, commit and
-build date. No release has been published yet.
+build date.
 
 A release also attaches Azahar's source tarball (GPL), pushes the container
 image `ghcr.io/michvllni/mcp-azahar` (`X.Y.Z`; `latest` only for releases),
 publishes the npm packages (pre-releases under the dist-tag `next`) with
-provenance, and finally the MCP Registry entry (releases only). Maintainer
-steps for the first release: publish it before the npm trust
-configurations expire (2026-11-20), make the ghcr package public, then
-re-run the failed `MCP Registry` job. Details:
+provenance, and finally the MCP Registry entry (releases only). Details:
 [AGENTS.md](AGENTS.md#ci-and-releases).
 
 ## Contributing

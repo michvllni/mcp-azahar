@@ -108,6 +108,17 @@ jobs:
         run: |
           scripts/install-mcp-publisher.sh -d "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Wait until npm serves this version
+        # npm processes new versions for a few minutes after the publish;
+        # the registry checks the npm package (v0.1.0 failed here at first).
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 60); do
+            if [ "$(npm view "mcp-azahar@$v" version 2>/dev/null)" = "$v" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "mcp-azahar@$v did not appear on npm within 15 minutes" >&2
+          exit 1
       - name: Publish server.json for this version
         run: |
           scripts/server-json.sh -v "${GITHUB_REF_NAME#v}" -o "$RUNNER_TEMP/registry/server.json"
