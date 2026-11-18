@@ -8,8 +8,8 @@ at the top of each section.
   The dev container runs Debian trixie (maintainer: assume trixie from now
   on).
 - Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. D4 decided
-  (RPC screenshots). Parallel sessions/RPC isolation is deferred until
-  before Phase 3 (see "Open questions").
+  (RPC screenshots). Parallel sessions/RPC isolation decided as D9 (one
+  RPC session per host, upstream request filed).
 - Phase 2 (RPC client `internal/rpc`): done, reviewed (PR #7 review
   findings fixed). Unit tests against `internal/rpc/fakeserver`, and a live
   test (`-tags integration`) passed against Azahar 2127.0-rc3. Next:
@@ -198,7 +198,7 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   configurable port, namespaces in reserve. PLAN Phases 3, 7 and 8 updated.
 - Screenshots use Azahar's RPC instead of X11 capture (DECISIONS.md D4,
   PLAN Phase 4 updated). Phase 2 keeps the RPC transport behind an
-  interface so a per-session relay (parallel-sessions question) can plug in
+  interface so a per-session relay (D9 option A, in reserve) can plug in
   without changing the client.
 - Base image changed from bookworm to trixie (maintainer decision), see
   "Resolved" above.
