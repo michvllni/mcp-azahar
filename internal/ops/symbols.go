@@ -142,6 +142,32 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 	return tg, nil
 }
 
+// CheckCondition validates a target and condition without touching the
+// emulator: the target resolves (symbol, field, type and length), and the
+// literal suits the target's kind for the op (decoded from zero bytes).
+// Errors wrap ErrUsage, except for an unreadable ELF.
+func (o *Ops) CheckCondition(name, expr string, cond Condition, opts ValueOptions) error {
+	tg, err := o.resolve(name, expr, opts)
+	if err != nil {
+		return err
+	}
+	if cond.Op == "" {
+		cond.Op = "eq"
+	}
+	if cond.Op == "changed" {
+		return nil
+	}
+	if tg.size > symbols.MaxDecodeSize {
+		return usage("%q has %d bytes: too large to compare", expr, tg.size)
+	}
+	zero, err := tg.decode(make([]byte, tg.size))
+	if err != nil {
+		return usage("%v", err)
+	}
+	_, err = Compare(zero, zero, cond)
+	return err
+}
+
 // isNumberish reports whether expr looks like an address, not a symbol.
 func isNumberish(expr string) bool {
 	e := strings.TrimSpace(expr)

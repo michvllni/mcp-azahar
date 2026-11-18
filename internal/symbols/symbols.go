@@ -58,6 +58,12 @@ type Table struct {
 	syms  map[string]Symbol // ELF symbols by name
 	dw    *dwarf.Data       // nil without debug info
 	vars  map[string][]variable
+	// funcs maps subprogram DIEs to their qualified names ("K::m"), so an
+	// out-of-line definition (only DW_AT_specification) names its statics.
+	funcs map[dwarf.Offset]string
+	// dataBitOffset holds structs whose bitfields use DW_AT_data_bit_offset
+	// (DWARF 4+) rather than DW_AT_bit_offset (DWARF 2/3).
+	dataBitOffset map[dwarf.Type]bool
 }
 
 // Open loads symbols (and DWARF, if present) from an ELF file.
@@ -70,7 +76,8 @@ func Open(path string) (*Table, error) {
 	if f.Class != elf.ELFCLASS32 {
 		return nil, fmt.Errorf("%s is not a 32-bit ELF (3DS homebrew is 32-bit ARM)", path)
 	}
-	t := &Table{order: f.ByteOrder, syms: map[string]Symbol{}, vars: map[string][]variable{}}
+	t := &Table{order: f.ByteOrder, syms: map[string]Symbol{}, vars: map[string][]variable{},
+		funcs: map[dwarf.Offset]string{}, dataBitOffset: map[dwarf.Type]bool{}}
 	syms, err := f.Symbols()
 	if err != nil && !errors.Is(err, elf.ErrNoSymbols) {
 		return nil, fmt.Errorf("read symbols of %s: %w", path, err)
@@ -119,6 +126,7 @@ const attrMIPSLinkageName dwarf.Attr = 0x2007
 type frame struct {
 	tag  dwarf.Tag
 	name string
+	off  dwarf.Offset
 }
 
 // walk visits every entry with the stack of enclosing entries.
@@ -142,15 +150,15 @@ func (t *Table) walk(fn func(e *dwarf.Entry, stack []frame)) error {
 		fn(e, stack)
 		if e.Children {
 			name, _ := e.Val(dwarf.AttrName).(string)
-			stack = append(stack, frame{e.Tag, name})
+			stack = append(stack, frame{e.Tag, name, e.Offset})
 		}
 	}
 }
 
 // qualify builds the name of an entry from its enclosing scopes:
 // namespaces and classes ("ns::K::v"), or the function for static locals
-// ("fa::v"), and returns the compile unit's file name.
-func qualify(name string, stack []frame) (q, cu string) {
+// ("fa::v", "K::m::v"), and returns the compile unit's file name.
+func (t *Table) qualify(name string, stack []frame) (q, cu string) {
 	parts := []string{}
 	for _, f := range stack {
 		switch f.tag {
@@ -161,7 +169,12 @@ func qualify(name string, stack []frame) (q, cu string) {
 				parts = append(parts, f.name)
 			}
 		case dwarf.TagSubprogram:
-			parts = []string{f.name} // statics are named after their function
+			// Statics are named after their function's qualified name.
+			fn := t.funcs[f.off]
+			if fn == "" {
+				fn = strings.Join(append(parts, f.name), "::")
+			}
+			parts = []string{fn}
 		}
 	}
 	return strings.Join(append(parts, name), "::"), cu
@@ -182,13 +195,32 @@ func staticAddr(e *dwarf.Entry) (uint32, bool) {
 // name and type to definitions that refer to them.
 func (t *Table) indexVariables() error {
 	decls := map[dwarf.Offset]declInfo{}
+	dbo := map[dwarf.Offset]bool{}
 	err := t.walk(func(e *dwarf.Entry, stack []frame) {
+		if e.Tag == dwarf.TagSubprogram {
+			// Declarations (in a class) come before their out-of-line
+			// definitions, which refer to them.
+			if name, _ := e.Val(dwarf.AttrName).(string); name != "" {
+				t.funcs[e.Offset], _ = t.qualify(name, stack)
+			}
+			for _, attr := range []dwarf.Attr{dwarf.AttrSpecification, dwarf.AttrAbstractOrigin} {
+				if off, ok := e.Val(attr).(dwarf.Offset); ok && t.funcs[e.Offset] == "" {
+					t.funcs[e.Offset] = t.funcs[off]
+				}
+			}
+			return
+		}
+		if e.Tag == dwarf.TagMember && len(stack) > 0 {
+			if _, ok := e.Val(dwarf.AttrDataBitOffset).(int64); ok {
+				dbo[stack[len(stack)-1].off] = true
+			}
+		}
 		if e.Tag != dwarf.TagVariable && e.Tag != dwarf.TagMember {
 			return
 		}
 		var d declInfo
 		if name, _ := e.Val(dwarf.AttrName).(string); name != "" {
-			d.name, _ = qualify(name, stack)
+			d.name, _ = t.qualify(name, stack)
 		}
 		d.typ, _ = e.Val(dwarf.AttrType).(dwarf.Offset)
 		d.linkage, _ = e.Val(dwarf.AttrLinkageName).(string)
@@ -200,6 +232,12 @@ func (t *Table) indexVariables() error {
 	})
 	if err != nil {
 		return err
+	}
+	for off := range dbo {
+		// Type() caches by offset, so resolved types are these pointers.
+		if typ, err := t.dw.Type(off); err == nil {
+			t.dataBitOffset[typ] = true
+		}
 	}
 	return t.walk(func(e *dwarf.Entry, stack []frame) {
 		if e.Tag != dwarf.TagVariable {
@@ -228,7 +266,7 @@ func (t *Table) indexVariables() error {
 				v.external = v.external || d.external
 			}
 		}
-		q, cu := qualify(name, stack)
+		q, cu := t.qualify(name, stack)
 		if v.name == "" && name != "" { // the declaration's scope wins
 			v.name = q
 		}
@@ -283,7 +321,7 @@ func (t *Table) List(filter string) []Symbol {
 	covered := map[uint32]bool{}
 	for name, vs := range t.vars {
 		for _, v := range vs {
-			if strings.Contains(name, "::") && v.name != name {
+			if v.name != name {
 				continue // mangled alias of a qualified name: list once
 			}
 			covered[v.addr] = true
@@ -419,7 +457,7 @@ func (t *Table) Resolve(expr string) (Location, error) {
 				if rest != "" {
 					return Location{}, fmt.Errorf("%q: bitfield %q has no parts", expr, field)
 				}
-				pos := bitPos(f)
+				pos := t.bitPos(st, f)
 				loc.Address += uint32(pos / 8)
 				loc.BitOffset, loc.BitSize = int(pos%8), int(f.BitSize)
 				loc.Type, loc.TypeName = f.Type, fmt.Sprintf("%s : %d", f.Type, f.BitSize)
@@ -459,8 +497,8 @@ func (t *Table) Resolve(expr string) (Location, error) {
 // bitPos returns a bitfield's bit position from the start of its struct,
 // for DWARF 4+ (data_bit_offset) and DWARF 2/3 (bit_offset from the most
 // significant bit of the storage unit, little-endian target).
-func bitPos(f *dwarf.StructField) int64 {
-	if f.ByteSize == 0 {
+func (t *Table) bitPos(st *dwarf.StructType, f *dwarf.StructField) int64 {
+	if t.dataBitOffset[st] || f.ByteSize == 0 || f.DataBitOffset != 0 {
 		return f.ByteOffset*8 + f.DataBitOffset
 	}
 	return f.ByteOffset*8 + f.ByteSize*8 - f.BitOffset - f.BitSize
@@ -568,7 +606,7 @@ func (t *Table) DecodeAt(b []byte, loc Location) (any, error) {
 		return fmt.Sprintf("%x", b), nil
 	}
 	if loc.BitSize > 0 {
-		return decodeBits(b, loc.BitOffset, loc.BitSize, signed(loc.Type)), nil
+		return bitfield(b, loc.BitOffset, loc.BitSize, loc.Type), nil
 	}
 	if len(b) > MaxDecodeSize {
 		return nil, fmt.Errorf("value of %d bytes is too large to decode (max %d); read a field, an element or raw memory", len(b), MaxDecodeSize)
@@ -576,12 +614,41 @@ func (t *Table) DecodeAt(b []byte, loc Location) (any, error) {
 	return t.decode(b, loc.Type)
 }
 
-func signed(typ dwarf.Type) bool {
-	switch strip(typ).(type) {
-	case *dwarf.IntType, *dwarf.CharType, *dwarf.EnumType:
-		return true
+// bitfield decodes a bitfield of type typ; enum bitfields become Enum.
+func bitfield(b []byte, off, size int, typ dwarf.Type) any {
+	switch v := strip(typ).(type) {
+	case *dwarf.IntType, *dwarf.CharType:
+		return decodeBits(b, off, size, true)
+	case *dwarf.EnumType:
+		n := decodeBits(b, off, size, enumSigned(v))
+		if u, ok := n.(uint64); ok {
+			return enumOf(v, int64(u))
+		}
+		return enumOf(v, n.(int64))
+	}
+	return decodeBits(b, off, size, false)
+}
+
+// enumSigned reports whether an enum has negative enumerators; otherwise
+// its values are unsigned (arm-none-eabi short enums: 0..255 in a byte).
+func enumSigned(e *dwarf.EnumType) bool {
+	for _, v := range e.Val {
+		if v.Val < 0 {
+			return true
+		}
 	}
 	return false
+}
+
+func enumOf(e *dwarf.EnumType, n int64) Enum {
+	out := Enum{Value: n}
+	for _, ev := range e.Val {
+		if ev.Val == n {
+			out.Name = ev.Name
+			break
+		}
+	}
+	return out
 }
 
 // decodeBits extracts size bits starting at bit off of the little-endian
@@ -621,15 +688,14 @@ func (t *Table) decode(b []byte, typ dwarf.Type) (any, error) {
 			return math.Float64frombits(t.order.Uint64(b)), nil
 		}
 	case *dwarf.EnumType:
-		n := decodeInt(b, int(v.Size()), t.order, true).(int64)
-		e := Enum{Value: n}
-		for _, ev := range v.Val {
-			if ev.Val == n {
-				e.Name = ev.Name
-				break
-			}
+		var n int64
+		switch x := decodeInt(b, int(v.Size()), t.order, enumSigned(v)).(type) {
+		case int64:
+			n = x
+		case uint64:
+			n = int64(x)
 		}
-		return e, nil
+		return enumOf(v, n), nil
 	case *dwarf.PtrType:
 		return uint64(t.order.Uint32(b)), nil
 	case *dwarf.ArrayType:
@@ -662,12 +728,12 @@ func (t *Table) decode(b []byte, typ dwarf.Type) (any, error) {
 		out := make(Struct, 0, len(v.Field))
 		for _, f := range v.Field {
 			if f.BitSize > 0 {
-				pos := bitPos(f)
+				pos := t.bitPos(v, f)
 				first, last := int(pos/8), int((pos+f.BitSize+7)/8)
 				if last > len(b) {
 					continue
 				}
-				out = append(out, Field{f.Name, decodeBits(b[first:last], int(pos%8), int(f.BitSize), signed(f.Type))})
+				out = append(out, Field{f.Name, bitfield(b[first:last], int(pos%8), int(f.BitSize), f.Type)})
 				continue
 			}
 			fs := int(f.Type.Size())

@@ -90,7 +90,7 @@ func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	before := fingerprint(s, slot)
+	before := fingerprint(s, slot, nil)
 	if err := c.SaveState(ctx, slot); err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
 	var last stateMeta
 	stable := 0
 	for {
-		cur := fingerprint(s, slot)
+		cur := fingerprint(s, slot, &before)
 		// Done once the file differs from before the request and its
 		// metadata stayed the same for a few polls (still being written
 		// otherwise).
@@ -146,12 +146,18 @@ type stateFingerprint struct {
 	hash [sha256.Size]byte
 }
 
-func fingerprint(s *session.Session, slot int) stateFingerprint {
+// fingerprint describes the slot's state file. The content is hashed only
+// if base is given and the metadata matches it, the only case where the
+// hash decides whether the file changed.
+func fingerprint(s *session.Session, slot int, base *stateFingerprint) stateFingerprint {
 	p, fi := emu.StateFile(s, slot)
 	if fi == nil {
 		return stateFingerprint{}
 	}
 	fp := stateFingerprint{stateMeta: stateMeta{p, fi.ModTime(), fi.Size()}, info: fi}
+	if base != nil && (base.info == nil || fp.stateMeta != base.stateMeta || !os.SameFile(fi, base.info)) {
+		return fp
+	}
 	if b, err := os.ReadFile(p); err == nil {
 		fp.hash = sha256.Sum256(b)
 	}

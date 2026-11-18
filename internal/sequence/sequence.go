@@ -370,6 +370,9 @@ func Run(ctx context.Context, o *ops.Ops, session string, f *File, opt Options) 
 		}
 		r.elf = p
 	}
+	if err := r.precheck(f); err != nil {
+		return nil, err
+	}
 	for i := range f.Steps {
 		if f.Steps[i].LogContains != nil {
 			// log_contains only matches lines written during the run.
@@ -425,6 +428,34 @@ type runner struct {
 	dir, elf string
 	restrict bool
 	logOff   int64 // where the next log_contains starts searching
+}
+
+// precheck checks what needs the session or the ELF before any step runs:
+// assert/wait_for targets and literals, and output paths, so a bad step
+// late in the file fails before earlier steps change the emulator.
+func (r *runner) precheck(f *File) error {
+	for i := range f.Steps {
+		st := &f.Steps[i]
+		c := st.Assert
+		if c == nil {
+			c = st.WaitFor
+		}
+		if c != nil {
+			cond := ops.Condition{Op: c.Op, Value: string(c.Value)}
+			if err := r.o.CheckCondition(r.session, c.Target, cond, valueOpts(c, r.elf)); err != nil {
+				if errors.Is(err, ops.ErrUsage) {
+					return stepError(i, err)
+				}
+				return fmt.Errorf("step %d: %w", i+1, err)
+			}
+		}
+		if st.Screenshot != nil {
+			if _, err := r.path(st.Screenshot.Output); err != nil {
+				return stepError(i, err)
+			}
+		}
+	}
+	return nil
 }
 
 // path resolves a file path of the sequence relative to its directory.

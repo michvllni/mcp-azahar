@@ -72,7 +72,7 @@ mcp-azahar read-symbol test_state.last_buttons --json
 mcp-azahar read-symbol 0x00101000 --type s16      # raw address with a type
 mcp-azahar read-symbol flags.ready                 # bitfields decode too
 mcp-azahar read-symbol ns::counter                # C++: ns::name, Class::member
-mcp-azahar read-symbol update::calls              # static local of update()
+mcp-azahar read-symbol update::calls              # static local of update() (K::m::calls in a method)
 mcp-azahar read-symbol menu.c:selected            # a static whose name is used elsewhere
 mcp-azahar wait-for test_state.frame 60 --op ge --timeout 5s   # exit 3 on timeout
 ```
@@ -110,7 +110,7 @@ steps:
 `mcp-azahar sequence smoke.yaml` stops at the first failing step: exit 0 if all
 pass, 3 if an `assert`/`wait_for`/`log_contains` check fails, 2 for an invalid
 file, 1 for other errors. The whole file is checked (buttons, ranges, addresses,
-targets) before the first step runs. `--json` prints a report per step with
+paths, and every target and value against the ELF) before the first step runs. `--json` prints a report per step with
 `error_kind` (`check` or `error`) and `duration_ms`. Comparisons (`op`): eq, ne,
 lt, le, gt, ge, and `changed` (no value) for `wait_for`; enums compare by name
 or number. `log_contains` only matches lines logged after the run started, and

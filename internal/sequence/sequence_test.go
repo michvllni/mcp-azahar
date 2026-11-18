@@ -228,21 +228,45 @@ steps:
 	}
 }
 
-func TestRunErrorsAreNotCheckFailures(t *testing.T) {
-	o, _, dir := setup(t)
-	for name, src := range map[string]string{
-		"unknown symbol": "steps:\n  - assert: {target: nope, value: 1}\n",
-		"string compare": "steps:\n  - assert: {target: test_state.name, op: gt, value: a}\n",
-		"unreadable elf": "elf: missing.elf\nsteps:\n  - assert: {target: counter, value: 1}\n",
+func TestPrecheckBeforeAnyStep(t *testing.T) {
+	o, srv, dir := setup(t)
+	// Step 1 would change memory; the bad target in step 2 must stop the
+	// run before it.
+	for name, tail := range map[string]string{
+		"unknown symbol": "  - assert: {target: nope, value: 1}\n",
+		"unknown field":  "  - wait_for: {target: test_state.nope, value: 1}\n",
+		"string compare": "  - assert: {target: test_state.name, op: gt, value: a}\n",
+		"not a number":   "  - assert: {target: counter, value: abc}\n",
+		"struct compare": "  - assert: {target: test_state, value: 1}\n",
+		"address len":    "  - assert: {target: \"0x00101080\", type: string, value: x}\n",
 	} {
+		src := "steps:\n  - write: {address: \"0x00101080\", bytes: \"2a\"}\n" + tail
 		rep, err := sequence.Run(context.Background(), o, "t", parse(t, src), sequence.Options{Dir: dir})
-		if err == nil || errors.Is(err, ops.ErrCheckFailed) || errors.Is(err, ops.ErrUsage) {
-			t.Errorf("%s: %v, want a plain run-time error (exit 1)", name, err)
+		if !errors.Is(err, ops.ErrUsage) || rep != nil || !strings.Contains(err.Error(), "step 2") {
+			t.Errorf("%s: %v, %+v; want a usage error for step 2", name, err, rep)
 		}
-		if rep != nil && len(rep.Steps) > 0 && rep.Steps[len(rep.Steps)-1].ErrorKind != "error" {
-			t.Errorf("%s: kind %q", name, rep.Steps[len(rep.Steps)-1].ErrorKind)
+		if b := srv.Memory(0x00101080, 1); len(b) == 1 && b[0] == 0x2a {
+			t.Fatalf("%s: step 1 ran", name)
 		}
 	}
+	// An ELF that cannot be read is an error (exit 1), not a usage problem.
+	f := parse(t, "elf: missing.elf\nsteps:\n  - assert: {target: counter, value: 1}\n")
+	if _, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir}); err == nil || errors.Is(err, ops.ErrUsage) || errors.Is(err, ops.ErrCheckFailed) {
+		t.Errorf("unreadable elf: %v", err)
+	}
+}
+
+func TestRunErrorsAreNotCheckFailures(t *testing.T) {
+	o, srv, dir := setup(t)
+	_ = srv.Close() // the emulator goes away: steps fail at run time
+	rep, err := sequence.Run(context.Background(), o, "t", parse(t, "steps:\n  - write: {address: \"0x100\", bytes: \"00\"}\n"), sequence.Options{Dir: dir})
+	if err == nil || errors.Is(err, ops.ErrCheckFailed) || errors.Is(err, ops.ErrUsage) || rep.Steps[0].ErrorKind != "error" {
+		t.Errorf("emulator gone: %v, %+v", err, rep)
+	}
+}
+
+func TestChecksFail(t *testing.T) {
+	o, _, dir := setup(t)
 	f := parse(t, "steps:\n  - log_contains: {text: never, timeout: 300ms}\n")
 	if _, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir}); !errors.Is(err, ops.ErrCheckFailed) {
 		t.Errorf("log_contains timeout: %v", err)

@@ -136,7 +136,16 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   page covers its addresses): symbols, read-symbol before/after a write,
   wait-for reached and timed out (exit 3), and a sequence with
   press/write/save/load/assert/screenshot/log_contains passed; an unknown
-  symbol in a step exited 1.
+  symbol in a step exited 1 (since the re-review it is caught before
+  the first step and exits 2).
+- Re-review of #14: arm-none-eabi short enums are unsigned (an enum with
+  200 is one byte 0xc8), so enums decode unsigned unless an enumerator is
+  negative, also as bitfields. Out-of-line C++ methods have no
+  `DW_AT_name`, only `DW_AT_specification`: subprogram names are resolved
+  through it, so statics read as `K::m::calls`. Go's `debug/dwarf` does
+  not say which bit offset attribute a member had; the index records
+  structs whose members carry `DW_AT_data_bit_offset`. Verified with GCC
+  12 at DWARF 2, 3, 4 and 5.
 
 ### Phase 5a
 - `internal/ops` holds every operation once; the CLI only parses and

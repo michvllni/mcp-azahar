@@ -20,6 +20,17 @@ struct pair {
     uint16_t lo, hi;
 };
 
+/* arm-none-eabi uses short enums: big is 1 byte, unsigned. */
+enum big { B0 = 0, B200 = 200 };
+enum col { RED, GREEN, BLUE, WHITE };
+enum sgn { NEG = -2, POS = 1 };
+
+struct colors {
+    enum col fg : 2;
+    enum col bg : 2;
+    enum sgn sg : 2;
+};
+
 extern bits_t bits;
 extern struct pair shared;
 extern const char *greeting;

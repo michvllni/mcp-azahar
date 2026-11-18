@@ -39,6 +39,12 @@ func TestRealWorldResolve(t *testing.T) {
 			"_ZN2ns7counterE":  `42`,
 			"K::s":             `9`,
 			"shared_static":    `1`,
+			"bigv":             `"B200"`, // short enum, unsigned
+			"colors":           `{"fg":"WHITE","bg":"GREEN","sg":"NEG"}`,
+			"colors.fg":        `"WHITE"`,
+			"colors.sg":        `"NEG"`,
+			"K::m::calls":      `5`, // static in an out-of-line method
+			"ns::nf::calls":    `6`,
 		} {
 			loc, err := tb.Resolve(expr)
 			if err != nil {
@@ -81,13 +87,18 @@ func TestRealWorldList(t *testing.T) {
 		for _, s := range open(t, p).List("") {
 			got[s.Name] = s
 		}
-		for _, n := range []string{"a.c:x", "x", "ns::counter", "K::s", "fa::st_local", "bits", "fa"} {
+		for _, n := range []string{"a.c:x", "x", "ns::counter", "K::s", "fa::st_local", "bits", "fa", "K::m::calls", "ns::nf::calls"} {
 			if _, ok := got[n]; !ok {
 				t.Errorf("%s: List lacks %s: %v", p, n, got)
 			}
 		}
 		if got["x"].Type != "struct pair" || got["a.c:x"].Type != "int" {
 			t.Errorf("%s: x types: %+v %+v", p, got["x"], got["a.c:x"])
+		}
+		for _, n := range []string{"_ZN2ns7counterE", "_ZN1K1sE", "::calls"} {
+			if _, ok := got[n]; ok {
+				t.Errorf("%s: List has %s", p, n)
+			}
 		}
 		if got["fa"].Kind != "func" {
 			t.Errorf("%s: fa: %+v", p, got["fa"])
