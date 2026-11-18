@@ -6,7 +6,9 @@ at the top of each section.
 ## Status
 - Phase 0 (tooling and skeleton): done except devkitPro (see "Blockers").
   The dev container runs Debian trixie (maintainer: assume trixie from now
-  on). Next: Phase 1.
+  on).
+- Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. Two decisions
+  for the maintainer before Phase 3/4 (see "Open questions"). Next: Phase 2.
 
 ## Blockers
 
@@ -65,19 +67,44 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 1 (details and sources in `docs/PROTOCOL.md`)
+- Source: azahar-emu/azahar `2127.0-rc3` = `11eceda5`, shallow clone outside
+  the repo. Every RPC request was exercised against the AppImage under Xvfb
+  with a hand-made 3DSX (ARM `b .` loop + marker words; generator kept out
+  of the repo, it is a research tool).
+- RPC protocol v2: UDP, 16-byte LE header (version 2, id, type, size), max
+  32 KiB data, 11 request types incl. memory, process list, **screenshots**,
+  perf stats, save/load state, SetInput. No error codes: failures are empty
+  replies or silently dropped datagrams.
+- **The RPC server binds `0.0.0.0:45987`, hard-coded.** Parallel sessions
+  need separate network namespaces; unprivileged user+net namespaces work in
+  the dev container and two instances ran in parallel that way.
+- **RPC has TakeScreenshot/ReadScreenshot** (PNG or raw RGB). With
+  `layout_option=1` it returns the top screen (400x240) or, with the
+  secondary flag, the bottom screen (320x240), so no cropping is needed.
+  This removes the premise of DECISIONS.md D4 (X11 capture).
+- RPC starts only after an app is loaded and is recreated by LoadState
+  (in-flight request lost, selected process reset).
+- WriteMemory replies empty even when it refuses the address; unmapped
+  reads return zeros. Clients must read back.
+- Seed config (`[Debugging] enable_rpc_server=true`, mind the
+  `\default` flag), portable `./user/` dir per session, update checker
+  off. No first-run dialog. CIA files trigger an install prompt.
+- Azahar ignores SIGINT/SIGTERM, **exits on SIGHUP**.
+- Qt `offscreen` platform is not bundled: Xvfb stays required.
+
+### Phase 0
 - Azahar 2127.0-rc3 starts under Xvfb: main window
   "Azahar 2127.0-rc3" (853x512), OpenGL renderer (llvmpipe), game-list
   placeholder. **No first-run setup dialog** with a fresh, empty
   `HOME`/`XDG_CONFIG_HOME`; it wrote `~/.config/azahar-emu/qt-config.ini`.
 - **Azahar ignores SIGTERM** (still running 3 s after `kill -TERM`; needed
-  SIGKILL). Phase 3 `stop` must escalate (TERM → wait → KILL), or find a
-  clean shutdown path in Phase 1.
+  SIGKILL). Phase 1 found that SIGHUP stops it.
 - Azahar spawns `sh` at startup (seen through the LD_LIBRARY_PATH crash);
   harmless, but keep it in mind for sandboxing.
 - CLI flags (`azahar -h`): `-g/--gdbport`, `-i/--install` (CIA),
   `-f/--fullscreen`, `-w/--windowed`, `-d/--dump-video`, movie
-  record/play, `<file path>` to boot an app. No flag for config dir or RPC
-  (Phase 1).
+  record/play, `<file path>` to boot an app. No flag for config dir or RPC.
 - Azahar releases (2026-11-18): latest stable 2126.2; latest 2127 build is
   **2127.0-rc3** (2026-11-12). No stable 2127 yet, so rc3 is pinned.
   Both #2730 (savestate RPC, merged as `acf9523`) and #2731 (SetInput RPC,
@@ -139,10 +166,28 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   conventions live in one place.
 
 ## Out of scope (do not build)
-- Upstream Azahar changes such as an RPC screenshot/framebuffer command.
-  Draft the feature request in `docs/upstream-proposal.md` instead.
+- Upstream Azahar changes. Draft feature requests in
+  `docs/upstream-proposal.md` instead. Since Azahar 2127 already has an RPC
+  screenshot command, the candidates are now: configurable RPC port and
+  bind address (default 127.0.0.1), status codes in replies, and
+  pause/resume, frame advance, reset and shutdown requests.
 
 ## Open questions
+- **D4 (screenshots):** use Azahar's RPC screenshot command as the default
+  `Capturer` backend instead of X11 capture? It works headless, returns
+  exact per-screen images, and is cross-platform. Proposal: RPC backend
+  only; X11 capture dropped or kept as fallback. Needs a DECISIONS.md update.
+- **Parallel sessions:** Azahar's RPC port is fixed (45987) on all
+  interfaces. Options: (a) one network namespace per session (unprivileged
+  `unshare --user --net`), with mcp-azahar reaching it through a small relay
+  over a Unix socket in the session dir, which also keeps RPC off the
+  network; (b) one session per host/container, documented; (c) wait for an
+  upstream change. Proposal: (a), with (b) as fallback where namespaces are
+  unavailable. To verify: GitHub's Ubuntu 24.04 runners restrict
+  unprivileged user namespaces via AppArmor.
+- Not verified yet: whether RPC requests are processed while emulation is
+  paused, whether the SetInput override survives LoadState, how long a load
+  takes.
 - Does the Coder template build from this repo's `.devcontainer/`, or must
   the template be updated separately for trixie?
 - Renovate GitHub app must be installed on the repo by the maintainer.

@@ -25,6 +25,7 @@ scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .github/             issue templates, PR template, renovate.json5
 .goreleaser.yaml     release builds   .golangci.yml  linter config
 docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
+docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
 Planned packages (see PLAN.md): `internal/rpc`, `internal/session`,
@@ -80,9 +81,10 @@ goreleaser check && goreleaser build --snapshot --clean
   file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI
   and MCP.
-- Never guess the Azahar RPC wire format: it comes from Azahar source and is
-  documented in `docs/PROTOCOL.md` (Phase 1). Pre-2127 Citra examples are
-  outdated.
+- Never guess the Azahar RPC wire format: `docs/PROTOCOL.md` is the
+  contract, derived from Azahar source with `path:line` references at a
+  pinned commit. When bumping Azahar, re-check it against the new source.
+  Pre-2127 Citra examples are outdated.
 - Shell scripts: header with synopsis/description/options/example, a
   `usage` function for `-h` and bad arguments, `set -euo pipefail`.
 - Commit after each phase. Do not push, tag, release or publish without
@@ -111,8 +113,13 @@ goreleaser check && goreleaser build --snapshot --clean
 - Azahar 2127 AppImages need glibc >= 2.39 and a HarfBuzz newer than 6.0,
   hence the trixie base. Never run Azahar with a different glibc via
   `LD_LIBRARY_PATH`: Azahar spawns `sh`, which then crashes.
-- Azahar ignores SIGTERM: stopping it needs SIGKILL after a grace period.
+- Azahar ignores SIGINT/SIGTERM; SIGHUP stops it, SIGKILL as last resort.
 - Azahar shows no first-run dialog with a fresh config dir.
+- RPC (see `docs/PROTOCOL.md`): binds `0.0.0.0:45987`, hard-coded, so one
+  RPC server per network namespace; it only starts once an app is loaded
+  and is recreated by LoadState; WriteMemory never reports failure (read
+  back); the `\default=true` flag in `qt-config.ini` overrides a stored
+  value.
 - devkitPro's servers return 403 from some cloud ranges; the test fixture
   is built in CI with the `devkitpro/devkitarm` image.
 - In the Coder workspace only `/home/vscode/volume` persists; anything
