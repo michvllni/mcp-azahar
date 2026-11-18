@@ -79,10 +79,14 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 ## Findings
 ### Phase 4
 - `capture.RPC` takes one RPC screenshot per screen (PNG straight from
-  Azahar, no re-encoding) and reports the size Azahar returned, so attached
-  instances with another layout still work. `capture.Compose` builds one
-  PNG in 3DS arrangement (top above, bottom centered) for single-file
-  output; MCP will return the shots as separate images.
+  Azahar, no re-encoding) and checks the PNG against the reported size and
+  the screen's aspect ratio: Azahar's other layouts put several screens in
+  one image, so attached instances must use the single-screen layout or
+  get `capture.ErrLayout` with instructions.
+- `both` = two consecutive frames (one per screen), not one frame.
+  `capture.Compose` builds one PNG in 3DS arrangement (top above, bottom
+  centered, opaque black margins), decoding one shot at a time (about
+  77 MB output at scale 10); MCP will return the shots as separate images.
 - Failures name the screen and add a hint: software renderer
   (Unsupported), concurrent capture (Busy), paused or blocked emulation
   (Timeout).

@@ -5,6 +5,7 @@ package capture_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"image/color"
 	"image/png"
@@ -110,7 +111,7 @@ func TestCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 	rgba := func(x, y int) color.RGBA { return color.RGBAModel.Convert(img.At(x, y)).(color.RGBA) }
-	red, blue, black := color.RGBA{255, 0, 0, 255}, color.RGBA{0, 0, 255, 255}, color.RGBA{0, 0, 0, 0}
+	red, blue, black := color.RGBA{255, 0, 0, 255}, color.RGBA{0, 0, 255, 255}, color.RGBA{0, 0, 0, 255}
 	for _, p := range []struct {
 		x, y int
 		want color.RGBA
@@ -129,5 +130,33 @@ func TestCompose(t *testing.T) {
 	}
 	if _, _, _, err := capture.Compose(nil); err == nil {
 		t.Fatal("empty compose accepted")
+	}
+}
+
+func TestDefaultLayoutRejected(t *testing.T) {
+	// Azahar's default layout: one 400x480 image with both screens.
+	srv, err := fakeserver.New(fakeserver.Config{Screens: func(bool, int) (int, int, []byte) {
+		w, h := 400, 480
+		return w, h, make([]byte, w*h*3)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	c, err := rpc.Dial(context.Background(), rpc.UDPDialer(srv.Addr()), rpc.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	_, err = capture.RPC{Client: c}.Capture(context.Background(), capture.Request{Screens: capture.Top})
+	if !errors.Is(err, capture.ErrLayout) || !strings.Contains(err.Error(), "layout_option=1") {
+		t.Fatalf("err = %v, want ErrLayout", err)
+	}
+}
+
+func TestShotJSON(t *testing.T) {
+	b, err := json.Marshal(capture.Shot{Screen: "top", Width: 400, Height: 240, PNG: []byte{1}})
+	if err != nil || string(b) != `{"screen":"top","width":400,"height":240}` {
+		t.Fatalf("JSON = %s, %v", b, err)
 	}
 }

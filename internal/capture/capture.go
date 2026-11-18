@@ -25,6 +25,9 @@ type Screens int
 const (
 	Top Screens = iota
 	Bottom
+	// Both captures the top screen, then the bottom screen: two
+	// consecutive rendered frames, not one (Azahar captures one screen per
+	// request), so input sent in between can show on the bottom only.
 	Both
 )
 
@@ -62,9 +65,10 @@ type Request struct {
 
 // Shot is one captured screen as PNG.
 type Shot struct {
-	Screen        string `json:"screen"` // "top" or "bottom"
-	Width, Height int
-	PNG           []byte `json:"-"`
+	Screen string `json:"screen"` // "top" or "bottom"
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	PNG    []byte `json:"-"`
 }
 
 // Capturer takes screenshots of a running emulator.
@@ -73,11 +77,19 @@ type Capturer interface {
 	Capture(ctx context.Context, req Request) ([]Shot, error)
 }
 
-// RPC captures through Azahar's RPC server. With the single-screen layout
-// sessions pin, a normal capture is the top screen (400x240 at scale 1)
-// and a secondary one the bottom screen (320x240). Attached instances may
-// use another layout; the reported size is what Azahar returned.
+// RPC captures through Azahar's RPC server. It needs Azahar's
+// single-screen layout ([Layout] layout_option=1, which launched sessions
+// pin): then a normal capture is the top screen (400x240 at scale 1) and a
+// secondary one the bottom screen (320x240). Other layouts put several
+// screens into one image; captures whose aspect ratio does not match a
+// single screen fail with ErrLayout.
 type RPC struct{ Client *rpc.Client }
+
+// ErrLayout means Azahar's screen layout is not single-screen.
+var ErrLayout = errors.New("azahar's screen layout is not single-screen: set [Layout] layout_option=1 in its qt-config.ini (View > Screen Layout > Single Screen)")
+
+// Native screen sizes at scale 1.
+var nativeSize = map[rpc.Screen][2]int{rpc.ScreenTop: {400, 240}, rpc.ScreenBottom: {320, 240}}
 
 // Capture implements Capturer.
 func (c RPC) Capture(ctx context.Context, req Request) ([]Shot, error) {
@@ -101,9 +113,29 @@ func (c RPC) Capture(ctx context.Context, req Request) ([]Shot, error) {
 		if err != nil {
 			return nil, explain(sc, err)
 		}
+		if err := checkShot(sc, img); err != nil {
+			return nil, err
+		}
 		shots = append(shots, Shot{Screen: sc.String(), Width: img.Width, Height: img.Height, PNG: img.Data})
 	}
 	return shots, nil
+}
+
+// checkShot verifies the PNG matches the reported size and that the size
+// has the aspect ratio of the requested screen (single-screen layout).
+func checkShot(sc rpc.Screen, img *rpc.Image) error {
+	cfg, err := png.DecodeConfig(bytes.NewReader(img.Data))
+	if err != nil {
+		return fmt.Errorf("%v screen: invalid PNG: %w", sc, err)
+	}
+	if cfg.Width != img.Width || cfg.Height != img.Height {
+		return fmt.Errorf("%v screen: PNG is %dx%d, Azahar reported %dx%d", sc, cfg.Width, cfg.Height, img.Width, img.Height)
+	}
+	n := nativeSize[sc]
+	if img.Width*n[1] != img.Height*n[0] {
+		return fmt.Errorf("%v screen: got a %dx%d image, want %dx%d times the scale: %w", sc, img.Width, img.Height, n[0], n[1], ErrLayout)
+	}
+	return nil
 }
 
 // explain turns screenshot failures into actionable errors.
@@ -125,8 +157,9 @@ func explain(sc rpc.Screen, err error) error {
 }
 
 // Compose combines shots into one PNG in the 3DS arrangement: top screen
-// above the bottom screen, each centered horizontally. A single shot is
-// returned unchanged.
+// above the bottom screen, each centered horizontally, on opaque black.
+// The shots of a Both capture are consecutive frames, not one. A single
+// shot is returned unchanged.
 func Compose(shots []Shot) ([]byte, int, int, error) {
 	switch len(shots) {
 	case 0:
@@ -134,20 +167,24 @@ func Compose(shots []Shot) ([]byte, int, int, error) {
 	case 1:
 		return shots[0].PNG, shots[0].Width, shots[0].Height, nil
 	}
-	imgs := make([]image.Image, len(shots))
 	w, h := 0, 0
-	for i, s := range shots {
+	for _, s := range shots {
+		cfg, err := png.DecodeConfig(bytes.NewReader(s.PNG))
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("decode %s screenshot: %w", s.Screen, err)
+		}
+		w = max(w, cfg.Width)
+		h += cfg.Height
+	}
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(out, out.Bounds(), image.Black, image.Point{}, draw.Src)
+	y := 0
+	// One decoded shot at a time keeps the peak memory low at high scales.
+	for _, s := range shots {
 		img, err := png.Decode(bytes.NewReader(s.PNG))
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("decode %s screenshot: %w", s.Screen, err)
 		}
-		imgs[i] = img
-		w = max(w, img.Bounds().Dx())
-		h += img.Bounds().Dy()
-	}
-	out := image.NewRGBA(image.Rect(0, 0, w, h))
-	y := 0
-	for _, img := range imgs {
 		b := img.Bounds()
 		x := (w - b.Dx()) / 2
 		draw.Draw(out, image.Rect(x, y, x+b.Dx(), y+b.Dy()), img, b.Min, draw.Src)
