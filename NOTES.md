@@ -26,8 +26,18 @@ at the top of each section.
   (PR #14, two rounds); live run against Azahar passed.
 - Phase 6 (MCP server, `internal/server`, `serve`): done, reviewed (PR
   #15, two rounds); stdio smoke test against Azahar passed.
-- Phase 7 (fixture + integration tests): implemented; fixture built in
-  CI, `TestFixture` passed against Azahar 2127.0-rc3 here (3 runs).
+- Phase 7 (fixture + integration tests): done, reviewed (PR #16); fixture
+  built in CI, `TestFixture` passes here and in CI against 2127.0-rc3.
+- Phase 8 (release packaging): done, reviewed: container image (PR #17),
+  npm with trusted publishing (PR #21), MCP Registry (PR #24), README
+  setup for Claude Code/Desktop. The first release (v0.1.0) is the
+  maintainer's: npm bootstrap, publish, ghcr public, re-run registry.
+- PLAN "Definition of done": go test, the integration suite, the green
+  `smoke.yaml` run and an MCP client launching the fixture, pressing
+  buttons, getting both screens and reading `test_state` are covered by
+  `TestFixture` (its `mcp` subtest speaks JSON-RPC over stdio like a
+  client) and CI's image job. Not done: a manual session in Claude Code
+  itself; suggested as the maintainer's smoke test after the release.
 
 ## Blockers
 
