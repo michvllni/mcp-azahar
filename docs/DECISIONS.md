@@ -213,7 +213,8 @@ all built by the release workflow (PLAN.md Phase 8):
    installing anything else; the natural way to use it in CI.
 3. **npm package `mcp-azahar`** so MCP clients can run
    `npx -y mcp-azahar serve`: a thin wrapper with per-platform binary
-   packages (`mcp-azahar-linux-x64` etc.), as esbuild and similar Go/Rust
+   packages (`@michvllni/mcp-azahar-linux-x64` etc.; scoped, see
+   Consequences), as esbuild and similar Go/Rust
    tools do. The names were free on npm on 2026-11-18.
 4. **Official MCP Registry** entry `io.github.michvllni/mcp-azahar`,
    listing the npm package and the container image.
@@ -244,11 +245,13 @@ all built by the release workflow (PLAN.md Phase 8):
   (`scripts/npm-packages.sh`) publishes the platform packages, then the
   wrapper, with **trusted publishing** (OIDC from `release.yml`, automatic
   provenance, no token; maintainer, 2026-11-18). npm can only configure
-  trust for an existing package, so the maintainer runs
-  `scripts/npm-bootstrap.sh` once, shortly before the first release: it
-  publishes a deprecated placeholder `0.0.0-bootstrap` per package and
-  runs `npm trust github` for each (a new trust configuration expires
-  unless used within 2 days).
+  trust for an existing package: each package was created once with a
+  staged placeholder (`npm stage publish`, never approved) and got
+  `npm trust github` for `release.yml` (a new trust configuration expires
+  unless used within 2 days). The platform packages live in the
+  maintainer's scope `@michvllni/`: npm's spam check refused the fifth of
+  a series of similar new unscoped names (`mcp-azahar-win32-x64`); the
+  wrapper stays `mcp-azahar`.
 - **GPL compliance:** Azahar's binary is GPL-3.0 (LICENSE.txt). Each
   image release ships Azahar's Corresponding Source by attaching the
   matching `azahar-unified-source-<version>.tar.xz` (published by Azahar,

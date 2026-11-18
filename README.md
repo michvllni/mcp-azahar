@@ -266,9 +266,9 @@ A release also attaches Azahar's source tarball (GPL), pushes the container
 image `ghcr.io/michvllni/mcp-azahar` (`X.Y.Z`; `latest` only for releases),
 publishes the npm packages (pre-releases under the dist-tag `next`) with
 provenance, and finally the MCP Registry entry (releases only). Maintainer
-steps for the first release: run `scripts/npm-bootstrap.sh` (npm trusted
-publishing setup, at most 2 days before), publish the release, make the
-ghcr package public, then re-run the failed `MCP Registry` job. Details:
+steps for the first release: publish it before the npm trust
+configurations expire (2026-11-20), make the ghcr package public, then
+re-run the failed `MCP Registry` job. Details:
 [AGENTS.md](AGENTS.md#ci-and-releases).
 
 ## Contributing

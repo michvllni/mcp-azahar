@@ -75,8 +75,9 @@ jobs:
           # Keeps the title entered in the GitHub release (see .goreleaser.yaml).
           RELEASE_NAME: ${{ github.event.release.name }}
       # npm (D10): the platform packages and the wrapper, from goreleaser's
-      # binaries in dist/. Trusted publishing: no token; scripts/npm-bootstrap.sh
-      # set it up once per package. Re-runs skip versions already published.
+      # binaries in dist/. Trusted publishing: no token; each package has a
+      # trusted publisher for this file (AGENTS.md). Re-runs skip published
+      # versions.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"

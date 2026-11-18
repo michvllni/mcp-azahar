@@ -84,7 +84,7 @@ jobs:
           for d in dist/npm/*; do (cd "$d" && npm pack --silent --pack-destination "$RUNNER_TEMP/npm/tgz"); done
           cd "$RUNNER_TEMP/npm/proj"
           npm init -y >/dev/null
-          npm install --no-audit --no-fund ../tgz/mcp-azahar-linux-x64-0.0.0-ci.tgz ../tgz/mcp-azahar-0.0.0-ci.tgz
+          npm install --no-audit --no-fund ../tgz/michvllni-mcp-azahar-linux-x64-0.0.0-ci.tgz ../tgz/mcp-azahar-0.0.0-ci.tgz
           ./node_modules/.bin/mcp-azahar version
           { printf '%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \

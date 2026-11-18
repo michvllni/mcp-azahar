@@ -37,12 +37,11 @@ scripts/             check-version.sh (tag vs. version), check-spdx.sh,
                      build-testdata.sh (rebuilds the committed test ELFs),
                      azahar-source.sh (Azahar source tarball + license),
                      npm-packages.sh (build/publish the npm packages),
-                     npm-bootstrap.sh (one-time npm trust setup),
                      server-json.sh, install-mcp-publisher.sh (MCP Registry)
 packaging/image/     release container image (Dockerfile, NOTICE.md),
                      built by goreleaser dockers_v2
 packaging/npm/       npm wrapper package mcp-azahar (bin/mcp-azahar.js runs
-                     the binary of mcp-azahar-<os>-<cpu>)
+                     the binary of @michvllni/mcp-azahar-<os>-<cpu>)
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
 .github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
 .github/             issue templates, PR template, renovate.json5
@@ -132,13 +131,19 @@ fixture build, the integration tests and the container image.
   too. The SBOM attestation and the push only run at a real release (CI
   builds a snapshot without them). CI job
   `image` builds it as a snapshot and launches the fixture inside it.
-- npm: the release job then publishes `mcp-azahar-<os>-<cpu>` and the
-  wrapper `mcp-azahar` with trusted publishing (`id-token: write`, no
-  token; `-rc` versions get the dist-tag `next`, and also `latest` while a
-  package has only the bootstrap placeholder). Before the first
-  release the maintainer runs `scripts/npm-bootstrap.sh` once (npm login
-  with 2FA): trust can only be set for existing packages and expires
-  unless a publish follows within 2 days. Re-runs skip published versions.
+- npm: the release job then publishes `@michvllni/mcp-azahar-<os>-<cpu>`
+  and the wrapper `mcp-azahar` with trusted publishing (`id-token: write`,
+  no token; `-rc` versions get the dist-tag `next`, and also `latest`
+  while a package has only a `0.0.0-*` placeholder). Re-runs skip
+  published versions. All 7 packages exist (staged placeholder
+  `0.0.0-bootstrap`) with a trusted publisher for `release.yml` since
+  2026-11-18 (NOTES.md Phase 8b). A new package needs the same by hand,
+  logged in to npm: `npm stage publish --access public --tag bootstrap`
+  of a placeholder `package.json`, then
+  `npm trust github <pkg> --file release.yml --repo michvllni/mcp-azahar --allow-publish --yes`;
+  a new trust configuration expires unless a publish succeeds within 2
+  days. Platform packages are scoped: npm's spam check refused a series
+  of similar unscoped names.
   The `checks` CI job builds the packages, dry-runs the publish, installs
   the wrapper and runs it. `repository.url` must stay
   `git+https://github.com/michvllni/mcp-azahar.git` (npm checks it).
