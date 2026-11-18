@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/michvllni/mcp-azahar/internal/ops"
 	"github.com/michvllni/mcp-azahar/internal/server"
@@ -66,5 +69,67 @@ func TestToolsMirrorCLI(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Errorf("CLI commands without an MCP tool (add one, or list them in cliOnly): %v", missing)
+	}
+}
+
+// flagRenames maps CLI flags to differently named tool properties.
+var flagRenames = map[string]string{"for": "for_ms", "interval": "interval_ms"}
+
+// flagOnly are CLI flags without a tool property on purpose.
+var flagOnly = map[string]string{
+	"read --format":     "the tool returns hex; dump and raw are terminal formats",
+	"logs --follow":     "tools do not stream; poll with from",
+	"serve --allow-dir": "serve has no tool",
+}
+
+// TestToolPropertiesMirrorFlags checks that every flag of a command is a
+// property of its tool (dashes become underscores), so a new flag cannot
+// be forgotten in the MCP server.
+func TestToolPropertiesMirrorFlags(t *testing.T) {
+	ctx := context.Background()
+	s := server.New(&ops.Ops{}, server.Options{})
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := s.MCP().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ss.Close() }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	list, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	props := map[string]map[string]any{}
+	for _, tool := range list.Tools {
+		schema, _ := tool.InputSchema.(map[string]any)
+		p, _ := schema["properties"].(map[string]any)
+		props[tool.Name] = p
+		if _, ok := p["session"]; !ok && tool.Name != "azahar_sessions" { // lists all
+			t.Errorf("%s has no session property", tool.Name)
+		}
+	}
+	root := newRootCmd()
+	for _, spec := range s.Specs() {
+		cmd, _, err := root.Find(strings.Fields(spec.CLI))
+		if err != nil {
+			t.Fatalf("%s: %v", spec.CLI, err)
+		}
+		cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+			key := spec.CLI + " --" + f.Name
+			if flagOnly[key] != "" {
+				return
+			}
+			name := strings.ReplaceAll(f.Name, "-", "_")
+			if r, ok := flagRenames[f.Name]; ok {
+				name = r
+			}
+			if _, ok := props[spec.Name][name]; !ok {
+				t.Errorf("%s has no property %q for %s (add it, or list the flag in flagOnly)", spec.Name, name, key)
+			}
+		})
 	}
 }

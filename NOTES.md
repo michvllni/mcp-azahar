@@ -101,6 +101,16 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   `azahar_logs` has no follow (use `from`); `azahar_sequence` takes inline
   scripts and always restricts paths; a failed wait or sequence returns
   its report inside the error text.
+- Review of #15: model-controlled paths were only restricted inside
+  sequences (`attach` with any `log` plus `azahar_logs` could read any
+  text file; `screenshot.output` could overwrite any file). Now every
+  path a tool takes must resolve, symlinks included, into the working
+  directory or `--allow-dir` directories. Results are capped (memory 4
+  KiB, logs 200/1000 lines, symbols 500, scale 4). Handlers recover
+  panics (the SDK does not: one would end the server). `attach` stores
+  the log path absolute. The parity test now also maps every CLI flag to
+  a tool property (`flagRenames`, `flagOnly`), and a subprocess test
+  checks that `serve`'s stdout carries only JSON-RPC.
 - Live smoke (2127.0-rc3, `serve` over stdio driven by a JSON-RPC script):
   initialize, tools/list (20), launch, status, read_symbol, screenshot
   (one 400x480 PNG for both), a save/load/press sequence and stop passed.

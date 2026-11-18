@@ -127,6 +127,10 @@ goreleaser check && goreleaser build --snapshot --clean
   `parity_test.go` with the reason). Tool descriptions state units,
   ranges and formats; MCP durations are milliseconds.
 - `serve` owns stdout for JSON-RPC: nothing in ops or server may print.
+- Every file path an MCP tool takes goes through `Server.path` (allowed
+  directories, symlinks resolved); results stay bounded (see the limits
+  in `internal/server`). A new CLI flag needs a tool property or an entry
+  in `flagOnly` in `parity_test.go`.
 - Input state held across commands lives in the session file (`Held`):
   Azahar replaces the whole input on every SetInput, and each CLI call is a
   separate process.

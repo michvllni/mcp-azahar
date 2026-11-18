@@ -145,8 +145,17 @@ Durations are in milliseconds (`for_ms`, `timeout_ms`). Errors come back as
 tool errors whose text starts with their kind: `invalid arguments`, `check
 failed` (an assert or wait that did not hold), or `no running session`.
 `azahar_sequence` takes a `file` or an inline `script`; its file paths must be
-relative and stay inside the sequence's directory (the server's working
-directory for scripts). `azahar_screenshot` can also save the PNG (`output`).
+relative and stay inside the sequence's directory. `azahar_screenshot` can also
+save the PNG (`output`).
+
+Files: tools only read and write files (app, ELF, log, sequence, screenshot
+output) inside the server's working directory, or the directories given with
+`serve --allow-dir DIR` (repeatable); symlinks pointing out are refused.
+Relative paths are relative to the first allowed directory. Results are capped
+to fit a model's context: `azahar_read_memory` reads at most 4096 bytes,
+`azahar_logs` returns the last 200 lines by default (`tail` up to 1000),
+`azahar_symbols` at most 500 entries (`filter` narrows), and screenshots use
+scale 1-4 (0: Azahar's internal resolution). `serve` ignores `--timeout`.
 
 ## Development
 The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)

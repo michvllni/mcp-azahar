@@ -27,8 +27,9 @@ import (
 var testELF, _ = filepath.Abs("../symbols/testdata/symbols.elf")
 
 // connect starts the MCP server on a session "t" attached to a fake Azahar
-// that holds the test ELF's data, and returns a connected client.
-func connect(t *testing.T) (*mcp.ClientSession, *fakeserver.Server) {
+// that holds the test ELF's data, and returns a connected client and the
+// directory the server allows files in.
+func connect(t *testing.T) (*mcp.ClientSession, *fakeserver.Server, string) {
 	t.Helper()
 	srv, err := fakeserver.New(fakeserver.Config{})
 	if err != nil {
@@ -58,7 +59,8 @@ func connect(t *testing.T) (*mcp.ClientSession, *fakeserver.Server) {
 	}
 	_ = f.Close()
 
-	s := server.New(o, server.Options{Version: "test", Session: "t"})
+	dir := t.TempDir()
+	s := server.New(o, server.Options{Version: "test", Session: "t", AllowDirs: []string{dir}})
 	ct, st2 := mcp.NewInMemoryTransports()
 	ss, err := s.MCP().Connect(ctx, st2, nil)
 	if err != nil {
@@ -70,7 +72,7 @@ func connect(t *testing.T) (*mcp.ClientSession, *fakeserver.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
-	return cs, srv
+	return cs, srv, dir
 }
 
 // call calls a tool and returns its result and joined text content.
@@ -90,7 +92,7 @@ func call(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any)
 }
 
 func TestListTools(t *testing.T) {
-	cs, _ := connect(t)
+	cs, _, _ := connect(t)
 	res, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +108,7 @@ func TestListTools(t *testing.T) {
 }
 
 func TestToolsDriveTheSession(t *testing.T) {
-	cs, srv := connect(t)
+	cs, srv, _ := connect(t)
 
 	res, text := call(t, cs, "azahar_hold", map[string]any{"buttons": []string{"L"}})
 	if res.IsError || srv.Input().Buttons&rpc.ButtonL == 0 {
@@ -147,7 +149,7 @@ func TestToolsDriveTheSession(t *testing.T) {
 }
 
 func TestScreenshotReturnsImages(t *testing.T) {
-	cs, _ := connect(t)
+	cs, _, _ := connect(t)
 	for screen, n := range map[string]int{"top": 1, "both": 1} {
 		res, text := call(t, cs, "azahar_screenshot", map[string]any{"screen": screen})
 		var imgs []*mcp.ImageContent
@@ -175,7 +177,7 @@ func TestScreenshotReturnsImages(t *testing.T) {
 }
 
 func TestSequence(t *testing.T) {
-	cs, _ := connect(t)
+	cs, _, _ := connect(t)
 	script := "steps:\n  - press: A\n  - assert: {target: test_state.mode, value: MODE_RUN}\n"
 	res, text := call(t, cs, "azahar_sequence", map[string]any{"script": script})
 	var rep struct {
@@ -200,7 +202,7 @@ func TestSequence(t *testing.T) {
 }
 
 func TestErrorsAreToolErrors(t *testing.T) {
-	cs, _ := connect(t)
+	cs, _, _ := connect(t)
 	for name, tc := range map[string]struct {
 		tool string
 		args map[string]any
