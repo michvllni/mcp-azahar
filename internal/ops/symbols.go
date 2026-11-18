@@ -85,8 +85,8 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 			return nil, usage("%v", err)
 		}
 		scalarSize = n
-		if scalarSize == 0 && opts.Len == 0 && isNumberish(expr) {
-			return nil, usage("--type %s needs --len", opts.Type)
+		if scalarSize > 0 && opts.Len > 0 {
+			return nil, usage("--len is only for string and bytes, not %s", opts.Type)
 		}
 	}
 	if isNumberish(expr) {
@@ -95,8 +95,13 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 			return nil, err
 		}
 		typ := opts.Type
-		if typ == "" {
+		switch {
+		case typ == "" && opts.Len > 0:
+			return nil, usage("--len needs --type string or bytes for an address")
+		case typ == "":
 			typ, scalarSize = "u32", 4
+		case scalarSize == 0 && opts.Len == 0:
+			return nil, usage("--type %s needs --len for an address", typ)
 		}
 		size := scalarSize
 		if size == 0 {
@@ -109,13 +114,13 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 		return nil, err
 	}
 	loc, err := t.Resolve(expr)
-	if errors.Is(err, symbols.ErrNotFound) {
-		return nil, usage("%v", err)
-	}
 	if err != nil {
 		return nil, usage("%v", err)
 	}
-	tg := &target{expr, loc.Address, loc.Size, loc.TypeName, func(b []byte) (any, error) { return t.Decode(b, loc.Type) }}
+	tg := &target{expr, loc.Address, loc.Size, loc.TypeName, func(b []byte) (any, error) { return t.DecodeAt(b, loc) }}
+	if loc.BitSize > 0 && (opts.Type != "" || opts.Len > 0) {
+		return nil, usage("%q is a bitfield: it is decoded by its type, without --type or --len", expr)
+	}
 	switch {
 	case opts.Type != "":
 		size := scalarSize
@@ -127,14 +132,12 @@ func (o *Ops) resolve(name, expr string, opts ValueOptions) (*target, error) {
 		}
 		tg.size, tg.typ = size, string(opts.Type)
 		tg.decode = func(b []byte) (any, error) { return symbols.DecodeScalar(b, opts.Type) }
-	case opts.Len > 0:
-		tg.size = opts.Len
-		if loc.Type == nil || opts.Len != loc.Size {
-			tg.typ, tg.decode = "bytes", func(b []byte) (any, error) { return symbols.DecodeScalar(b, "bytes") }
-		}
+	case opts.Len > 0 && (loc.Type == nil || opts.Len != loc.Size):
+		tg.size, tg.typ = opts.Len, "bytes"
+		tg.decode = func(b []byte) (any, error) { return symbols.DecodeScalar(b, "bytes") }
 	}
 	if tg.size <= 0 {
-		return nil, usage("size of %q unknown: pass --len or --type", expr)
+		return nil, usage("size of %q unknown: pass --type (and --len for string/bytes)", expr)
 	}
 	return tg, nil
 }
@@ -175,26 +178,31 @@ type Condition struct {
 
 // WaitResult reports a finished wait.
 type WaitResult struct {
-	Value   *Value        `json:"value"`
-	Elapsed time.Duration `json:"elapsed_ns"`
-	Polls   int           `json:"polls"`
+	// Value is the last value read (nil if none could be read in time).
+	Value     *Value        `json:"value"`
+	Elapsed   time.Duration `json:"-"`
+	ElapsedMS int64         `json:"elapsed_ms"`
+	Polls     int           `json:"polls"`
 }
 
 // DefaultWait is how long WaitFor waits without a deadline in ctx.
 const DefaultWait = 10 * time.Second
 
 // WaitFor polls a target every interval (default 50 ms) until cond holds.
-// If ctx ends first (its deadline is the timeout; DefaultWait if none), it
-// returns ErrCheckFailed with the last value.
+// If ctx's deadline passes first (DefaultWait if it has none), it returns
+// ErrCheckFailed with the last value; if ctx is canceled, ctx.Err().
 func (o *Ops) WaitFor(ctx context.Context, name, expr string, cond Condition, opts ValueOptions, interval time.Duration) (*WaitResult, error) {
 	if cond.Op == "" {
 		cond.Op = "eq"
 	}
-	if cond.Op != "changed" && cond.Value == "" {
-		return nil, usage("%s needs a value to compare with", cond.Op)
-	}
 	if _, ok := map[string]bool{"eq": true, "ne": true, "lt": true, "le": true, "gt": true, "ge": true, "changed": true}[cond.Op]; !ok {
 		return nil, usage("unknown comparison %q (eq, ne, lt, le, gt, ge, changed)", cond.Op)
+	}
+	if cond.Op == "changed" && cond.Value != "" {
+		return nil, usage("changed takes no value")
+	}
+	if cond.Op != "changed" && cond.Value == "" {
+		return nil, usage("%s needs a value to compare with", cond.Op)
 	}
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
@@ -209,12 +217,21 @@ func (o *Ops) WaitFor(ctx context.Context, name, expr string, cond Condition, op
 		return nil, err
 	}
 	start := time.Now()
+	res := func(v *Value, polls int) *WaitResult {
+		el := time.Since(start)
+		return &WaitResult{Value: v, Elapsed: el, ElapsedMS: el.Milliseconds(), Polls: polls}
+	}
 	var first, last *Value
-	for polls := 1; ; polls++ {
+	polls := 0
+	for {
+		polls++
 		v, err := o.readTarget(ctx, name, tg)
 		if err != nil {
-			if ctx.Err() != nil && last != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				break
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
 			return nil, err
 		}
@@ -227,18 +244,29 @@ func (o *Ops) WaitFor(ctx context.Context, name, expr string, cond Condition, op
 			return nil, err
 		}
 		if ok {
-			return &WaitResult{Value: v, Elapsed: time.Since(start), Polls: polls}, nil
+			return res(v, polls), nil
 		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(interval):
 			continue
 		}
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, ctx.Err()
+		}
 		break
 	}
-	return &WaitResult{Value: last, Elapsed: time.Since(start)},
-		fmt.Errorf("%w: %s %s %s not reached within %v (last value %s)",
-			ErrCheckFailed, expr, cond.Op, cond.Value, time.Since(start).Round(time.Millisecond), show(last.Value))
+	r := res(last, polls)
+	lastShown := "none read"
+	if last != nil {
+		lastShown = "last value " + show(last.Value)
+	}
+	want := cond.Op
+	if cond.Value != "" {
+		want += " " + cond.Value
+	}
+	return r, fmt.Errorf("%w: %s %s not reached within %v (%s, %d polls)",
+		ErrCheckFailed, expr, want, r.Elapsed.Round(time.Millisecond), lastShown, polls)
 }
 
 func show(v any) string {
@@ -251,13 +279,33 @@ func show(v any) string {
 
 // Compare evaluates cond for v (first is the baseline for "changed").
 // Numbers compare numerically (literal in decimal, 0x hex or float), bools
-// and strings (incl. enum names) only with eq/ne.
+// and strings only with eq/ne; enums by name (eq/ne) or by number.
 func Compare(v, first any, cond Condition) (bool, error) {
 	if cond.Op == "changed" {
 		return show(v) != show(first), nil
 	}
 	lit := strings.TrimSpace(cond.Value)
 	switch x := v.(type) {
+	case symbols.Enum:
+		if x.Name != "" && x.Name == lit {
+			return eqOnly(true, cond.Op)
+		}
+		if _, err := strconv.ParseFloat(lit, 64); err != nil {
+			if _, ierr := strconv.ParseInt(lit, 0, 64); ierr != nil {
+				return eqOnly(false, cond.Op) // another enumerator's name
+			}
+		}
+		return Compare(x.Value, first, cond)
+	case float32:
+		// Round the literal to float32 too, so 0.1 equals a stored 0.1f.
+		f, err := strconv.ParseFloat(lit, 32)
+		if err != nil {
+			return Compare(float64(x), first, cond)
+		}
+		if math.IsNaN(float64(x)) {
+			return cond.Op == "ne", nil
+		}
+		return cmpOrdered(float64(x), float64(float32(f)), cond.Op), nil
 	case int64:
 		if n, err := strconv.ParseInt(lit, 0, 64); err == nil {
 			return cmpOrdered(x, n, cond.Op), nil

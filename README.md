@@ -70,8 +70,17 @@ mcp-azahar symbols --filter state
 mcp-azahar read-symbol test_state                 # whole struct as JSON-like text
 mcp-azahar read-symbol test_state.last_buttons --json
 mcp-azahar read-symbol 0x00101000 --type s16      # raw address with a type
+mcp-azahar read-symbol flags.ready                 # bitfields decode too
+mcp-azahar read-symbol ns::counter                # C++: ns::name, Class::member
+mcp-azahar read-symbol update::calls              # static local of update()
+mcp-azahar read-symbol menu.c:selected            # a static whose name is used elsewhere
 mcp-azahar wait-for test_state.frame 60 --op ge --timeout 5s   # exit 3 on timeout
 ```
+
+Values decode by C type: integers, floats, bools, bitfields, enums (by name),
+pointers (as their address), plain `char` arrays as text, structs and arrays as
+JSON. Only variables with a static address (globals, statics) can be read;
+locals on the stack cannot.
 
 A **sequence** file describes a whole test run (YAML or JSON) and works without
 any AI involved, e.g. in CI:
@@ -91,7 +100,7 @@ steps:
   - wait_for: {target: test_state.frame, op: ge, value: 60, timeout: 5s}
   - assert: {target: test_state.last_buttons, value: 0}
   - assert: {target: "0x00101000", type: u32, op: ne, value: 0}
-  - write: {address: "0x00101000", bytes: "de ad be ef"}
+  - write: {address: "0x00102000", bytes: "de ad be ef"}   # memory your app does not use
   - screenshot: {screen: both, output: out/smoke.png}
   - save_state: 1              # waits until Azahar has written the file
   - load_state: 1
@@ -100,8 +109,12 @@ steps:
 
 `mcp-azahar sequence smoke.yaml` stops at the first failing step: exit 0 if all
 pass, 3 if an `assert`/`wait_for`/`log_contains` check fails, 2 for an invalid
-file, 1 for other errors. `--json` prints a report per step. Comparisons (`op`):
-eq, ne, lt, le, gt, ge, and `changed` for `wait_for`.
+file, 1 for other errors. The whole file is checked (buttons, ranges, addresses,
+targets) before the first step runs. `--json` prints a report per step with
+`error_kind` (`check` or `error`) and `duration_ms`. Comparisons (`op`): eq, ne,
+lt, le, gt, ge, and `changed` (no value) for `wait_for`; enums compare by name
+or number. `log_contains` only matches lines logged after the run started, and
+each match moves past its line.
 
 ## Development
 The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)

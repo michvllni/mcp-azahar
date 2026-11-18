@@ -674,20 +674,21 @@ func (m *Manager) Status(ctx context.Context, name string) (*Status, error) {
 	return st, nil
 }
 
-// StateInfo returns the newest save state file for slot: its modification
-// time and size; ok is false if there is none or the user directory is
-// unknown.
-func StateInfo(s *session.Session, slot int) (mod time.Time, size int64, ok bool) {
+// StateFile returns the newest save state file for slot (by modification
+// time), or "" and nil if there is none or the user directory is unknown.
+func StateFile(s *session.Session, slot int) (string, os.FileInfo) {
 	if s.UserDir() == "" {
-		return time.Time{}, 0, false
+		return "", nil
 	}
 	matches, _ := filepath.Glob(filepath.Join(s.UserDir(), "states", fmt.Sprintf("*.%02d.cst", slot)))
+	var path string
+	var info os.FileInfo
 	for _, m := range matches {
-		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(mod) {
-			mod, size, ok = fi.ModTime(), fi.Size(), true
+		if fi, err := os.Stat(m); err == nil && (info == nil || fi.ModTime().After(info.ModTime())) {
+			path, info = m, fi
 		}
 	}
-	return mod, size, ok
+	return path, info
 }
 
 // HasState reports whether a session has a save state in slot. Loading an

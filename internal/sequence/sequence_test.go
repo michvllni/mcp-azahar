@@ -22,6 +22,9 @@ import (
 
 var testELF, _ = filepath.Abs("../symbols/testdata/symbols.elf")
 
+// logFile is the fake session log of the last setup.
+var logFile string
+
 func setup(t *testing.T) (*ops.Ops, *fakeserver.Server, string) {
 	t.Helper()
 	srv, err := fakeserver.New(fakeserver.Config{})
@@ -34,7 +37,7 @@ func setup(t *testing.T) (*ops.Ops, *fakeserver.Server, string) {
 		t.Fatal(err)
 	}
 	o := &ops.Ops{M: &emu.Manager{Store: st, RPCOptions: rpc.Options{Timeout: 200 * time.Millisecond}}}
-	logFile := filepath.Join(t.TempDir(), "azahar_log.txt")
+	logFile = filepath.Join(t.TempDir(), "azahar_log.txt")
 	_ = os.WriteFile(logFile, []byte("boot\nfixture ready\n"), 0o600)
 	if _, err := o.Attach(context.Background(), "t", emu.AttachOptions{Address: srv.Addr(), ELF: testELF, LogPath: logFile}); err != nil {
 		t.Fatal(err)
@@ -73,6 +76,25 @@ func TestParseErrors(t *testing.T) {
 		"neg duration":  "steps:\n  - wait: -1s\n",
 		"bad buttons":   "steps:\n  - press: {a: 1}\n",
 		"value as list": "steps:\n  - assert: {target: x, value: [1]}\n",
+		"bad button":    "steps:\n  - press: A\n  - press: TURBO\n",
+		"no buttons":    "steps:\n  - press: []\n",
+		"for on hold":   "steps:\n  - hold: A\n    for: 1s\n",
+		"hold and for":  "steps:\n  - touch: {x: 1, y: 1, hold: true, for: 1s}\n",
+		"touch range":   "steps:\n  - touch: {x: 320, y: 0}\n",
+		"pad range":     "steps:\n  - circle_pad: {x: 0, y: -200}\n",
+		"no output":     "steps:\n  - screenshot: {screen: top}\n",
+		"bad screen":    "steps:\n  - screenshot: {screen: left, output: a.png}\n",
+		"bad address":   "steps:\n  - write: {address: zz, bytes: \"00\"}\n",
+		"bad bytes":     "steps:\n  - write: {address: \"0x100\", bytes: \"0g\"}\n",
+		"no target":     "steps:\n  - assert: {value: 1}\n",
+		"no value":      "steps:\n  - assert: {target: x}\n",
+		"bad op":        "steps:\n  - assert: {target: x, op: approx, value: 1}\n",
+		"assert change": "steps:\n  - assert: {target: x, op: changed}\n",
+		"changed value": "steps:\n  - wait_for: {target: x, op: changed, value: 1}\n",
+		"bad type":      "steps:\n  - assert: {target: x, type: u128, value: 1}\n",
+		"bad slot":      "steps:\n  - save_state: 11\n",
+		"no log text":   "steps:\n  - log_contains: {timeout: 1s}\n",
+		"two docs":      "steps:\n  - press: A\n---\nsteps:\n  - press: B\n",
 	} {
 		if _, err := sequence.Parse(strings.NewReader(src)); !errors.Is(err, ops.ErrUsage) {
 			t.Errorf("%s: %v, want ErrUsage", name, err)
@@ -109,8 +131,12 @@ steps:
   - screenshot: {screen: both, output: out.png}
   - save_state: 1
   - load_state: 1
-  - log_contains: {text: ready, timeout: 1s}
+  - log_contains: {text: ready, timeout: 2s}
 `)
+	go func() { // only lines written during the run count
+		time.Sleep(300 * time.Millisecond)
+		appendLog(t, "app ready\n")
+	}()
 	var seen []int
 	rep, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir, OnStep: func(s sequence.StepResult) { seen = append(seen, s.Index) }})
 	if err != nil {
@@ -127,6 +153,63 @@ steps:
 	}
 }
 
+func appendLog(t *testing.T, s string) {
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	_, _ = f.WriteString(s)
+	_ = f.Close()
+}
+
+func TestLogContainsAdvances(t *testing.T) {
+	o, _, dir := setup(t)
+	// "fixture ready" was logged before the run: it must not match. Each
+	// match moves past its line, so the second step needs a second line.
+	appendLog(t, "level 1 done\n")
+	f := parse(t, `
+steps:
+  - log_contains: {text: done, timeout: 2s}
+  - log_contains: {text: done, timeout: 2s}
+`)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		appendLog(t, "level 2 done\nlevel 3 done\n")
+	}()
+	rep, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	l1 := rep.Steps[0].Detail.(map[string]string)["line"]
+	l2 := rep.Steps[1].Detail.(map[string]string)["line"]
+	if l1 != "level 2 done" || l2 != "level 3 done" {
+		t.Fatalf("matched %q, %q", l1, l2)
+	}
+	f = parse(t, "steps:\n  - log_contains: {text: ready, timeout: 300ms}\n")
+	if _, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir}); !errors.Is(err, ops.ErrCheckFailed) {
+		t.Fatalf("old line matched: %v", err)
+	}
+}
+
+func TestRestrictPaths(t *testing.T) {
+	o, _, dir := setup(t)
+	for _, src := range []string{
+		"steps:\n  - screenshot: {screen: top, output: ../out.png}\n",
+		"steps:\n  - screenshot: {screen: top, output: /tmp/out.png}\n",
+		"elf: ../x.elf\nsteps:\n  - press: A\n",
+	} {
+		rep, err := sequence.Run(context.Background(), o, "t", parse(t, src), sequence.Options{Dir: dir, RestrictPaths: true})
+		if !errors.Is(err, ops.ErrUsage) && (rep == nil || rep.Passed) {
+			t.Errorf("%q: %v", src, err)
+		}
+	}
+	f := parse(t, "steps:\n  - screenshot: {screen: top, output: ok.png}\n")
+	if _, err := sequence.Run(context.Background(), o, "t", f, sequence.Options{Dir: dir, RestrictPaths: true}); err != nil {
+		t.Fatalf("local path: %v", err)
+	}
+}
+
 func TestRunStopsAtFailedAssert(t *testing.T) {
 	o, _, dir := setup(t)
 	f := parse(t, `
@@ -140,7 +223,7 @@ steps:
 	if !errors.Is(err, ops.ErrCheckFailed) || !strings.Contains(err.Error(), `step 2 (assert "wrong frame")`) || !strings.Contains(err.Error(), "is 7, want eq 8") {
 		t.Fatalf("err = %v", err)
 	}
-	if rep.Passed || len(rep.Steps) != 2 || rep.Skipped != 1 || rep.Steps[1].OK {
+	if rep.Passed || len(rep.Steps) != 2 || rep.Skipped != 1 || rep.Steps[1].OK || rep.Steps[1].ErrorKind != "check" {
 		t.Fatalf("report: %+v", rep)
 	}
 }
@@ -148,14 +231,16 @@ steps:
 func TestRunErrorsAreNotCheckFailures(t *testing.T) {
 	o, _, dir := setup(t)
 	for name, src := range map[string]string{
-		"unknown symbol":   "steps:\n  - assert: {target: nope, value: 1}\n",
-		"bad button":       "steps:\n  - press: TURBO\n",
-		"changed assert":   "steps:\n  - assert: {target: counter, op: changed}\n",
-		"no screenshot to": "steps:\n  - screenshot: {screen: top}\n",
+		"unknown symbol": "steps:\n  - assert: {target: nope, value: 1}\n",
+		"string compare": "steps:\n  - assert: {target: test_state.name, op: gt, value: a}\n",
+		"unreadable elf": "elf: missing.elf\nsteps:\n  - assert: {target: counter, value: 1}\n",
 	} {
-		_, err := sequence.Run(context.Background(), o, "t", parse(t, src), sequence.Options{Dir: dir})
+		rep, err := sequence.Run(context.Background(), o, "t", parse(t, src), sequence.Options{Dir: dir})
 		if err == nil || errors.Is(err, ops.ErrCheckFailed) || errors.Is(err, ops.ErrUsage) {
 			t.Errorf("%s: %v, want a plain run-time error (exit 1)", name, err)
+		}
+		if rep != nil && len(rep.Steps) > 0 && rep.Steps[len(rep.Steps)-1].ErrorKind != "error" {
+			t.Errorf("%s: kind %q", name, rep.Steps[len(rep.Steps)-1].ErrorKind)
 		}
 	}
 	f := parse(t, "steps:\n  - log_contains: {text: never, timeout: 300ms}\n")

@@ -4,6 +4,7 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/michvllni/mcp-azahar/internal/capture"
 	"github.com/michvllni/mcp-azahar/internal/emu"
 	"github.com/michvllni/mcp-azahar/internal/rpc"
+	"github.com/michvllni/mcp-azahar/internal/session"
 )
 
 // Screenshot captures one or both screens (Both: two consecutive frames).
@@ -88,7 +90,7 @@ func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	before, _, _ := emu.StateInfo(s, slot)
+	before := fingerprint(s, slot)
 	if err := c.SaveState(ctx, slot); err != nil {
 		return err
 	}
@@ -100,25 +102,65 @@ func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
 		wait = DefaultSaveWait
 	}
 	deadline := time.Now().Add(wait)
-	var lastSize int64 = -1
+	var last stateMeta
+	stable := 0
 	for {
-		mod, size, ok := emu.StateInfo(s, slot)
-		// Written after the request, and the size stopped changing.
-		if ok && mod.After(before) && size > 0 && size == lastSize {
-			return nil
+		cur := fingerprint(s, slot)
+		// Done once the file differs from before the request and its
+		// metadata stayed the same for a few polls (still being written
+		// otherwise).
+		if cur.path != "" && cur.size > 0 && !cur.sameAs(before) {
+			if cur.stateMeta == last {
+				stable++
+			} else {
+				stable = 0
+			}
+			if stable >= 2 {
+				return nil
+			}
 		}
-		if ok && mod.After(before) {
-			lastSize = size
-		}
+		last = cur.stateMeta
 		if time.Now().After(deadline) {
 			return fmt.Errorf("azahar accepted the save to slot %d but did not write the state file within %v", slot, wait)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// stateMeta identifies a version of a save state file by its metadata.
+type stateMeta struct {
+	path string
+	mod  time.Time
+	size int64
+}
+
+// stateFingerprint adds the file identity and, to catch rewrites within
+// the file system's timestamp resolution, a content hash.
+type stateFingerprint struct {
+	stateMeta
+	info os.FileInfo
+	hash [sha256.Size]byte
+}
+
+func fingerprint(s *session.Session, slot int) stateFingerprint {
+	p, fi := emu.StateFile(s, slot)
+	if fi == nil {
+		return stateFingerprint{}
+	}
+	fp := stateFingerprint{stateMeta: stateMeta{p, fi.ModTime(), fi.Size()}, info: fi}
+	if b, err := os.ReadFile(p); err == nil {
+		fp.hash = sha256.Sum256(b)
+	}
+	return fp
+}
+
+// sameAs reports whether f is the very file version of before.
+func (f stateFingerprint) sameAs(before stateFingerprint) bool {
+	return before.info != nil && f.stateMeta == before.stateMeta && os.SameFile(f.info, before.info) && f.hash == before.hash
 }
 
 // LoadState loads slot 0..10. For launched sessions it first checks that

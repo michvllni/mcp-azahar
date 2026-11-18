@@ -2,8 +2,13 @@
 
 // Package symbols reads a homebrew's ELF to find variables by name instead
 // of hard-coded addresses (DECISIONS.md D3, D5). With DWARF debug info it
-// also resolves struct fields and array elements ("test_state.touch.x",
-// "table[2]") and decodes values by their C types.
+// also resolves struct fields, bitfields and array elements
+// ("test_state.touch.x", "table[2]") and decodes values by their C types.
+//
+// Names: file-scope variables by name; C++ namespace and class members as
+// "ns::counter", "K::s" (or their mangled names); static locals as
+// "func::var"; a static that shares its name with another variable as
+// "file.c:name". Function locals on the stack are not addressable.
 package symbols
 
 import (
@@ -15,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +29,11 @@ import (
 // ErrNotFound means the name is not in the ELF.
 var ErrNotFound = errors.New("symbol not found")
 
-// Symbol is an ELF symbol.
+// MaxDecodeSize bounds values decoded as a whole (64 KiB): bigger ones
+// produce unusable output; read parts or use raw memory reads instead.
+const MaxDecodeSize = 64 << 10
+
+// Symbol is a variable or function.
 type Symbol struct {
 	Name    string `json:"name"`
 	Address uint32 `json:"address"`
@@ -33,12 +43,21 @@ type Symbol struct {
 	Type string `json:"type,omitempty"`
 }
 
+// variable is a DWARF variable with a static address.
+type variable struct {
+	name     string // qualified: ns::counter, fa::st_local
+	cu       string // compile unit file name (base)
+	addr     uint32
+	typ      dwarf.Offset
+	external bool
+}
+
 // Table is a loaded ELF.
 type Table struct {
 	order binary.ByteOrder
-	syms  map[string]Symbol
-	dw    *dwarf.Data             // nil without debug info
-	vars  map[string]dwarf.Offset // variable name -> type offset
+	syms  map[string]Symbol // ELF symbols by name
+	dw    *dwarf.Data       // nil without debug info
+	vars  map[string][]variable
 }
 
 // Open loads symbols (and DWARF, if present) from an ELF file.
@@ -51,7 +70,7 @@ func Open(path string) (*Table, error) {
 	if f.Class != elf.ELFCLASS32 {
 		return nil, fmt.Errorf("%s is not a 32-bit ELF (3DS homebrew is 32-bit ARM)", path)
 	}
-	t := &Table{order: f.ByteOrder, syms: map[string]Symbol{}, vars: map[string]dwarf.Offset{}}
+	t := &Table{order: f.ByteOrder, syms: map[string]Symbol{}, vars: map[string][]variable{}}
 	syms, err := f.Symbols()
 	if err != nil && !errors.Is(err, elf.ErrNoSymbols) {
 		return nil, fmt.Errorf("read symbols of %s: %w", path, err)
@@ -76,7 +95,9 @@ func Open(path string) (*Table, error) {
 	}
 	if dw, err := f.DWARF(); err == nil {
 		t.dw = dw
-		t.indexVariables()
+		if err := t.indexVariables(); err != nil {
+			return nil, fmt.Errorf("read DWARF of %s: %w", path, err)
+		}
 	}
 	return t, nil
 }
@@ -84,46 +105,213 @@ func Open(path string) (*Table, error) {
 // HasDWARF reports whether type information is available.
 func (t *Table) HasDWARF() bool { return t.dw != nil }
 
-// indexVariables maps variable names to their DWARF types (definitions
-// with a location only, not extern declarations).
-func (t *Table) indexVariables() {
+// declInfo is what a declaration contributes to a definition that refers
+// to it (DW_AT_specification, DW_AT_abstract_origin).
+type declInfo struct {
+	name, linkage string
+	typ           dwarf.Offset
+	external      bool
+}
+
+// attrMIPSLinkageName is the pre-DWARF 4 attribute for mangled names.
+const attrMIPSLinkageName dwarf.Attr = 0x2007
+
+type frame struct {
+	tag  dwarf.Tag
+	name string
+}
+
+// walk visits every entry with the stack of enclosing entries.
+func (t *Table) walk(fn func(e *dwarf.Entry, stack []frame)) error {
 	r := t.dw.Reader()
+	var stack []frame
 	for {
 		e, err := r.Next()
-		if err != nil || e == nil {
-			return
+		if err != nil {
+			return err
 		}
-		if e.Tag != dwarf.TagVariable {
+		if e == nil {
+			return nil
+		}
+		if e.Tag == 0 {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
 			continue
 		}
-		name, _ := e.Val(dwarf.AttrName).(string)
-		typ, ok := e.Val(dwarf.AttrType).(dwarf.Offset)
-		if name == "" || !ok || e.Val(dwarf.AttrLocation) == nil {
-			continue
-		}
-		if _, dup := t.vars[name]; !dup {
-			t.vars[name] = typ
+		fn(e, stack)
+		if e.Children {
+			name, _ := e.Val(dwarf.AttrName).(string)
+			stack = append(stack, frame{e.Tag, name})
 		}
 	}
 }
 
-// List returns object and function symbols whose name contains filter
+// qualify builds the name of an entry from its enclosing scopes:
+// namespaces and classes ("ns::K::v"), or the function for static locals
+// ("fa::v"), and returns the compile unit's file name.
+func qualify(name string, stack []frame) (q, cu string) {
+	parts := []string{}
+	for _, f := range stack {
+		switch f.tag {
+		case dwarf.TagCompileUnit:
+			cu = filepath.Base(f.name)
+		case dwarf.TagNamespace, dwarf.TagClassType, dwarf.TagStructType, dwarf.TagUnionType:
+			if f.name != "" {
+				parts = append(parts, f.name)
+			}
+		case dwarf.TagSubprogram:
+			parts = []string{f.name} // statics are named after their function
+		}
+	}
+	return strings.Join(append(parts, name), "::"), cu
+}
+
+// staticAddr returns the address of a DW_OP_addr location expression.
+func staticAddr(e *dwarf.Entry) (uint32, bool) {
+	loc, ok := e.Val(dwarf.AttrLocation).([]byte)
+	if !ok || len(loc) != 5 || loc[0] != 0x03 { // DW_OP_addr, 4-byte address
+		return 0, false
+	}
+	return binary.LittleEndian.Uint32(loc[1:]), true
+}
+
+// indexVariables maps variable names to their static addresses and types:
+// file-scope variables, namespace and class statics, and static locals.
+// Stack locals are left out. Declarations (in headers, classes) supply
+// name and type to definitions that refer to them.
+func (t *Table) indexVariables() error {
+	decls := map[dwarf.Offset]declInfo{}
+	err := t.walk(func(e *dwarf.Entry, stack []frame) {
+		if e.Tag != dwarf.TagVariable && e.Tag != dwarf.TagMember {
+			return
+		}
+		var d declInfo
+		if name, _ := e.Val(dwarf.AttrName).(string); name != "" {
+			d.name, _ = qualify(name, stack)
+		}
+		d.typ, _ = e.Val(dwarf.AttrType).(dwarf.Offset)
+		d.linkage, _ = e.Val(dwarf.AttrLinkageName).(string)
+		if d.linkage == "" { // DWARF 2/3: DW_AT_MIPS_linkage_name
+			d.linkage, _ = e.Val(attrMIPSLinkageName).(string)
+		}
+		d.external, _ = e.Val(dwarf.AttrExternal).(bool)
+		decls[e.Offset] = d
+	})
+	if err != nil {
+		return err
+	}
+	return t.walk(func(e *dwarf.Entry, stack []frame) {
+		if e.Tag != dwarf.TagVariable {
+			return
+		}
+		addr, ok := staticAddr(e)
+		if !ok {
+			return // stack local, register, or declaration only
+		}
+		own := decls[e.Offset]
+		v := variable{addr: addr, typ: own.typ, external: own.external}
+		name, _ := e.Val(dwarf.AttrName).(string)
+		linkage := own.linkage
+		for _, attr := range []dwarf.Attr{dwarf.AttrSpecification, dwarf.AttrAbstractOrigin} {
+			if off, ok := e.Val(attr).(dwarf.Offset); ok {
+				d := decls[off]
+				if v.typ == 0 {
+					v.typ = d.typ
+				}
+				if v.name == "" {
+					v.name = d.name
+				}
+				if linkage == "" {
+					linkage = d.linkage
+				}
+				v.external = v.external || d.external
+			}
+		}
+		q, cu := qualify(name, stack)
+		if v.name == "" && name != "" { // the declaration's scope wins
+			v.name = q
+		}
+		v.cu = cu
+		if v.name == "" {
+			return
+		}
+		t.vars[v.name] = append(t.vars[v.name], v)
+		if linkage != "" && linkage != v.name {
+			t.vars[linkage] = append(t.vars[linkage], v)
+		}
+	})
+}
+
+// lookup finds the variable for a (qualified, maybe file-prefixed) name.
+func (t *Table) lookup(cu, name string) (*variable, error) {
+	var cands []variable
+	for _, v := range t.vars[name] {
+		if cu == "" || v.cu == cu {
+			cands = append(cands, v)
+		}
+	}
+	switch len(cands) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &cands[0], nil
+	}
+	var ext []variable
+	for _, v := range cands {
+		if v.external {
+			ext = append(ext, v)
+		}
+	}
+	if len(ext) == 1 {
+		return &ext[0], nil
+	}
+	opts := []string{}
+	for _, v := range cands {
+		opts = append(opts, v.cu+":"+name)
+	}
+	sort.Strings(opts)
+	return nil, fmt.Errorf("%q is ambiguous: use one of %s", name, strings.Join(opts, ", "))
+}
+
+// List returns variables (with qualified names and types, from DWARF) and
+// other object and function symbols whose name contains filter
 // (case-insensitive), sorted by name.
 func (t *Table) List(filter string) []Symbol {
 	f := strings.ToLower(filter)
 	out := []Symbol{}
+	covered := map[uint32]bool{}
+	for name, vs := range t.vars {
+		for _, v := range vs {
+			if strings.Contains(name, "::") && v.name != name {
+				continue // mangled alias of a qualified name: list once
+			}
+			covered[v.addr] = true
+			n := name
+			if len(vs) > 1 && !v.external {
+				n = v.cu + ":" + name
+			}
+			if f != "" && !strings.Contains(strings.ToLower(n), f) {
+				continue
+			}
+			s := Symbol{Name: n, Address: v.addr, Kind: "object"}
+			if typ, err := t.dw.Type(v.typ); err == nil && v.typ != 0 {
+				s.Type, s.Size = typ.String(), uint32(max(typ.Size(), 0))
+			}
+			out = append(out, s)
+		}
+	}
 	for _, s := range t.syms {
-		if f != "" && !strings.Contains(strings.ToLower(s.Name), f) {
+		if covered[s.Address] && s.Kind == "object" {
 			continue
 		}
-		if off, ok := t.vars[s.Name]; ok {
-			if typ, err := t.dw.Type(off); err == nil {
-				s.Type = typ.String()
-			}
+		if f != "" && !strings.Contains(strings.ToLower(s.Name), f) {
+			continue
 		}
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// Same name from DWARF and ELF at different addresses: keep both.
 	return out
 }
 
@@ -135,28 +323,83 @@ type Location struct {
 	Type    dwarf.Type `json:"-"` // nil without DWARF
 	// TypeName is Type.String(), or "" without DWARF.
 	TypeName string `json:"type,omitempty"`
+	// BitOffset and BitSize describe a bitfield within the Size bytes at
+	// Address (BitSize 0: not a bitfield).
+	BitOffset int `json:"bit_offset,omitempty"`
+	BitSize   int `json:"bit_size,omitempty"`
 }
 
-// Resolve resolves an expression: a symbol name followed by .field and
+// parseBase splits "file.c:ns::name.field[2]" into the compile unit
+// ("file.c" or ""), the qualified name and the rest (".field[2]").
+func parseBase(expr string) (cu, name, rest string) {
+	s := expr
+	// A single ':' (not '::') before the name selects the compile unit.
+	for i := 0; i < len(s); i++ {
+		if s[i] == '[' {
+			break
+		}
+		if s[i] == ':' {
+			if i+1 < len(s) && s[i+1] == ':' {
+				i++
+				continue
+			}
+			cu, s = s[:i], s[i+1:]
+			break
+		}
+	}
+	end := len(s)
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' || s[i] == '[' {
+			end = i
+			break
+		}
+	}
+	return cu, s[:end], s[end:]
+}
+
+// Resolve resolves an expression: a variable name followed by .field and
 // [index] parts, e.g. "test_state.touch.x" or "table[2]". Fields and
 // indices need DWARF.
 func (t *Table) Resolve(expr string) (Location, error) {
-	name, rest := splitBase(expr)
-	sym, ok := t.syms[name]
-	if !ok {
-		return Location{}, fmt.Errorf("%w: %q", ErrNotFound, name)
+	cu, name, rest := parseBase(expr)
+	if name == "" {
+		return Location{}, fmt.Errorf("%q: no variable name", expr)
 	}
-	loc := Location{Expr: expr, Address: sym.Address, Size: int(sym.Size)}
-	off, typed := t.vars[name]
-	if !typed {
+	loc := Location{Expr: expr}
+	var typ dwarf.Type
+	v, err := t.lookup(cu, name)
+	if err != nil {
+		return Location{}, err
+	}
+	switch {
+	case v != nil && v.typ != 0:
+		typ, err = t.dw.Type(v.typ)
+		if err != nil {
+			return Location{}, fmt.Errorf("type of %q: %w", name, err)
+		}
+		loc.Address = v.addr
+	case v != nil:
+		loc.Address = v.addr
+		if s, ok := t.syms[name]; ok {
+			loc.Size = int(s.Size)
+		}
+	case cu == "":
+		s, ok := t.syms[name]
+		if !ok {
+			return Location{}, fmt.Errorf("%w: %q", ErrNotFound, name)
+		}
+		loc.Address, loc.Size = s.Address, int(s.Size)
+	default:
+		return Location{}, fmt.Errorf("%w: %q in %s", ErrNotFound, name, cu)
+	}
+	if typ == nil {
 		if rest != "" {
-			return Location{}, fmt.Errorf("%q: fields and indices need DWARF type info for %q (build with -g)", expr, name)
+			if t.dw == nil {
+				return Location{}, fmt.Errorf("%q: fields and indices need DWARF type info (build with -g)", expr)
+			}
+			return Location{}, fmt.Errorf("%q: no DWARF type for %q", expr, name)
 		}
 		return loc, nil
-	}
-	typ, err := t.dw.Type(off)
-	if err != nil {
-		return Location{}, fmt.Errorf("type of %q: %w", name, err)
 	}
 	for rest != "" {
 		typ = strip(typ)
@@ -166,11 +409,22 @@ func (t *Table) Resolve(expr string) (Location, error) {
 			field, rest = splitField(rest[1:])
 			st, ok := typ.(*dwarf.StructType)
 			if !ok {
-				return Location{}, fmt.Errorf("%q: %s is not a struct", expr, typ)
+				return Location{}, fmt.Errorf("%q: %s is not a struct or union", expr, typ)
 			}
 			f := findField(st, field)
 			if f == nil {
 				return Location{}, fmt.Errorf("%q: %s has no field %q (fields: %s)", expr, typ, field, fieldNames(st))
+			}
+			if f.BitSize > 0 {
+				if rest != "" {
+					return Location{}, fmt.Errorf("%q: bitfield %q has no parts", expr, field)
+				}
+				pos := bitPos(f)
+				loc.Address += uint32(pos / 8)
+				loc.BitOffset, loc.BitSize = int(pos%8), int(f.BitSize)
+				loc.Type, loc.TypeName = f.Type, fmt.Sprintf("%s : %d", f.Type, f.BitSize)
+				loc.Size = (loc.BitOffset + loc.BitSize + 7) / 8
+				return loc, nil
 			}
 			loc.Address += uint32(f.ByteOffset)
 			typ = f.Type
@@ -188,10 +442,11 @@ func (t *Table) Resolve(expr string) (Location, error) {
 			if !ok {
 				return Location{}, fmt.Errorf("%q: %s is not an array", expr, typ)
 			}
-			if at.Count >= 0 && int64(idx) >= at.Count {
+			// Count 0 or -1: flexible array member or unknown length.
+			if at.Count > 0 && int64(idx) >= at.Count {
 				return Location{}, fmt.Errorf("%q: index %d out of range (length %d)", expr, idx, at.Count)
 			}
-			loc.Address += uint32(idx) * uint32(at.Type.Size())
+			loc.Address += uint32(idx) * uint32(max(at.Type.Size(), 0))
 			typ = at.Type
 		default:
 			return Location{}, fmt.Errorf("%q: unexpected %q", expr, rest)
@@ -201,12 +456,14 @@ func (t *Table) Resolve(expr string) (Location, error) {
 	return loc, nil
 }
 
-func splitBase(expr string) (string, string) {
-	i := strings.IndexAny(expr, ".[")
-	if i < 0 {
-		return expr, ""
+// bitPos returns a bitfield's bit position from the start of its struct,
+// for DWARF 4+ (data_bit_offset) and DWARF 2/3 (bit_offset from the most
+// significant bit of the storage unit, little-endian target).
+func bitPos(f *dwarf.StructField) int64 {
+	if f.ByteSize == 0 {
+		return f.ByteOffset*8 + f.DataBitOffset
 	}
-	return expr[:i], expr[i:]
+	return f.ByteOffset*8 + f.ByteSize*8 - f.BitOffset - f.BitSize
 }
 
 func splitField(s string) (string, string) {
@@ -281,15 +538,70 @@ func (s Struct) MarshalJSON() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// Enum is a decoded enum: its number and, if one matches, its name. It
+// marshals as the name, or the number without a matching enumerator.
+type Enum struct {
+	Name  string
+	Value int64
+}
+
+// MarshalJSON writes the name, or the number.
+func (e Enum) MarshalJSON() ([]byte, error) {
+	if e.Name != "" {
+		return json.Marshal(e.Name)
+	}
+	return json.Marshal(e.Value)
+}
+
 // Decode converts memory to Go values by DWARF type: integers (int64 or
-// uint64), float64, bool, char arrays as strings (up to the first NUL),
-// other arrays as slices, structs as Struct, pointers as "0x…" strings,
-// enums as their enumerator name if one matches, else the number. With a
-// nil type it returns the bytes as a hex string.
+// uint64), float32/float64, bool, plain char arrays as strings (up to the
+// first NUL), other arrays as slices, structs and unions as Struct,
+// pointers as uint64, enums as Enum. With a nil type it returns the bytes
+// as a hex string.
 func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
-	if typ == nil {
+	return t.DecodeAt(b, Location{Type: typ, Size: len(b)})
+}
+
+// DecodeAt decodes memory read for loc (handles bitfields).
+func (t *Table) DecodeAt(b []byte, loc Location) (any, error) {
+	if loc.Type == nil {
 		return fmt.Sprintf("%x", b), nil
 	}
+	if loc.BitSize > 0 {
+		return decodeBits(b, loc.BitOffset, loc.BitSize, signed(loc.Type)), nil
+	}
+	if len(b) > MaxDecodeSize {
+		return nil, fmt.Errorf("value of %d bytes is too large to decode (max %d); read a field, an element or raw memory", len(b), MaxDecodeSize)
+	}
+	return t.decode(b, loc.Type)
+}
+
+func signed(typ dwarf.Type) bool {
+	switch strip(typ).(type) {
+	case *dwarf.IntType, *dwarf.CharType, *dwarf.EnumType:
+		return true
+	}
+	return false
+}
+
+// decodeBits extracts size bits starting at bit off of the little-endian
+// bytes b.
+func decodeBits(b []byte, off, size int, sign bool) any {
+	var u uint64
+	for i := len(b) - 1; i >= 0; i-- {
+		u = u<<8 | uint64(b[i])
+	}
+	u = (u >> uint(off)) & (1<<uint(size) - 1)
+	if sign && u&(1<<uint(size-1)) != 0 {
+		return int64(u) - 1<<uint(size)
+	}
+	if sign {
+		return int64(u)
+	}
+	return u
+}
+
+func (t *Table) decode(b []byte, typ dwarf.Type) (any, error) {
 	typ = strip(typ)
 	if sz := typ.Size(); sz > 0 && int64(len(b)) < sz {
 		return nil, fmt.Errorf("%d bytes for %s of size %d", len(b), typ, sz)
@@ -304,25 +616,27 @@ func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
 	case *dwarf.FloatType:
 		switch v.Size() {
 		case 4:
-			return float64(math.Float32frombits(t.order.Uint32(b))), nil
+			return math.Float32frombits(t.order.Uint32(b)), nil
 		case 8:
 			return math.Float64frombits(t.order.Uint64(b)), nil
 		}
 	case *dwarf.EnumType:
 		n := decodeInt(b, int(v.Size()), t.order, true).(int64)
-		for _, e := range v.Val {
-			if e.Val == n {
-				return e.Name, nil
+		e := Enum{Value: n}
+		for _, ev := range v.Val {
+			if ev.Val == n {
+				e.Name = ev.Name
+				break
 			}
 		}
-		return n, nil
+		return e, nil
 	case *dwarf.PtrType:
-		return fmt.Sprintf("0x%08x", t.order.Uint32(b)), nil
+		return uint64(t.order.Uint32(b)), nil
 	case *dwarf.ArrayType:
 		el := strip(v.Type)
-		if _, isChar := el.(*dwarf.CharType); isChar || isUchar(el) {
+		if isPlainChar(v.Type) {
 			n := int(v.Count)
-			if n < 0 || n > len(b) {
+			if n <= 0 || n > len(b) {
 				n = len(b)
 			}
 			s := b[:n]
@@ -332,12 +646,12 @@ func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
 			return string(s), nil
 		}
 		es := int(el.Size())
-		if v.Count < 0 || es <= 0 {
-			return fmt.Sprintf("%x", b), nil
+		if v.Count <= 0 || es <= 0 {
+			return []any{}, nil // flexible or unknown: index elements instead
 		}
 		out := make([]any, 0, v.Count)
 		for i := 0; i < int(v.Count); i++ {
-			val, err := t.Decode(b[i*es:(i+1)*es], el)
+			val, err := t.decode(b[i*es:(i+1)*es], el)
 			if err != nil {
 				return nil, err
 			}
@@ -347,11 +661,20 @@ func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
 	case *dwarf.StructType:
 		out := make(Struct, 0, len(v.Field))
 		for _, f := range v.Field {
+			if f.BitSize > 0 {
+				pos := bitPos(f)
+				first, last := int(pos/8), int((pos+f.BitSize+7)/8)
+				if last > len(b) {
+					continue
+				}
+				out = append(out, Field{f.Name, decodeBits(b[first:last], int(pos%8), int(f.BitSize), signed(f.Type))})
+				continue
+			}
 			fs := int(f.Type.Size())
 			if f.ByteOffset < 0 || int(f.ByteOffset)+fs > len(b) || fs <= 0 {
 				continue
 			}
-			val, err := t.Decode(b[f.ByteOffset:int(f.ByteOffset)+fs], f.Type)
+			val, err := t.decode(b[f.ByteOffset:int(f.ByteOffset)+fs], f.Type)
 			if err != nil {
 				return nil, err
 			}
@@ -362,9 +685,24 @@ func (t *Table) Decode(b []byte, typ dwarf.Type) (any, error) {
 	return fmt.Sprintf("%x", b), nil
 }
 
-func isUchar(t dwarf.Type) bool {
-	_, ok := t.(*dwarf.UcharType)
-	return ok
+// isPlainChar reports whether t is plain char (unsigned on ARM), not
+// signed/unsigned char or a typedef like uint8_t: only plain char arrays
+// are text.
+func isPlainChar(t dwarf.Type) bool {
+	for {
+		q, ok := t.(*dwarf.QualType)
+		if !ok {
+			break
+		}
+		t = q.Type
+	}
+	switch c := t.(type) {
+	case *dwarf.CharType:
+		return c.Name == "char"
+	case *dwarf.UcharType:
+		return c.Name == "char"
+	}
+	return false
 }
 
 func decodeInt(b []byte, size int, order binary.ByteOrder, signed bool) any {
@@ -426,7 +764,7 @@ func DecodeScalar(b []byte, s Scalar) (any, error) {
 	case "s8", "s16", "s32", "s64":
 		return decodeInt(b, n, le, true), nil
 	case "f32":
-		return float64(math.Float32frombits(le.Uint32(b))), nil
+		return math.Float32frombits(le.Uint32(b)), nil
 	case "f64":
 		return math.Float64frombits(le.Uint64(b)), nil
 	case "bool":

@@ -18,10 +18,16 @@ const (
 	noDebugELF = "testdata/symbols-nodebug.elf"
 )
 
-// dataAt returns n bytes of the ELF's initialized data at addr.
+// dataAt returns n bytes of the test ELF's initialized data at addr.
 func dataAt(t *testing.T, addr uint32, n int) []byte {
 	t.Helper()
-	f, err := elf.Open(testELF)
+	return dataIn(t, testELF, addr, n)
+}
+
+// dataIn returns n bytes of an ELF's initialized data at addr.
+func dataIn(t *testing.T, path string, addr uint32, n int) []byte {
+	t.Helper()
+	f, err := elf.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +87,7 @@ func TestResolveAndDecode(t *testing.T) {
 		"test_state.speed":     `1.5`,
 		"test_state.ok":        `true`,
 		"test_state.mode":      `"MODE_RUN"`,
-		"test_state.ptr":       `"0x00000000"`,
+		"test_state.ptr":       `0`,
 		"table[3]":             `40`,
 		"table[0x1]":           `20`,
 		"counter":              `3`,

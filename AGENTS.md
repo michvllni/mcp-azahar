@@ -25,7 +25,8 @@ internal/            all behavior; CLI and MCP call the same functions
   emu/               launch/attach/stop/status of Azahar (+ Xvfb), D9 rules
   capture/           screenshots via RPC (D4), 3DS-style composite
   symbols/           ELF symbols + DWARF types for read-symbol/wait-for
-    testdata/        symbols.c and its committed ARM ELFs
+    testdata/        symbols.c, realworld/ (C + C++, DWARF 5 and 2) and
+                     their committed ARM ELFs
   sequence/          YAML/JSON scripted tests (sequence command)
   ops/               every user-facing operation, shared by CLI and MCP
   version/           version string formatting; Commit/Date set via -ldflags
@@ -198,3 +199,7 @@ goreleaser check && goreleaser build --snapshot --clean
   dir, `azahar.out` and `xvfb.out`.
 - Never file issues or comment on azahar-emu/azahar yourself, and do not
   commit drafts for upstream: hand them to the maintainer, who posts them.
+- Symbols: only DWARF variables with a `DW_OP_addr` location are
+  addressable; never index stack locals (they would shadow globals).
+  Bitfield offsets differ between DWARF 2/3 and 4+ (NOTES.md Phase 5b);
+  test symbol changes against both `realworld*.elf` fixtures.

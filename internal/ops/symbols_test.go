@@ -16,6 +16,7 @@ import (
 	"github.com/michvllni/mcp-azahar/internal/ops"
 	"github.com/michvllni/mcp-azahar/internal/rpc/fakeserver"
 	"github.com/michvllni/mcp-azahar/internal/session"
+	"github.com/michvllni/mcp-azahar/internal/symbols"
 )
 
 var testELF, _ = filepath.Abs("../symbols/testdata/symbols.elf")
@@ -91,6 +92,8 @@ func TestReadValue(t *testing.T) {
 		{"0x00101000", ops.ValueOptions{Type: "string"}}, // string needs --len
 		{"0x00101000", ops.ValueOptions{Type: "float9"}}, // unknown type
 		{"test_state", ops.ValueOptions{Len: -1}},
+		{"0x00101000", ops.ValueOptions{Len: 4}},             // --len without --type
+		{"0x00101000", ops.ValueOptions{Type: "u8", Len: 4}}, // --len with a fixed-size type
 	} {
 		if _, err := o.ReadValue(ctx, "t", bad.expr, bad.opts); !errors.Is(err, ops.ErrUsage) {
 			t.Errorf("%s %+v: %v, want ErrUsage", bad.expr, bad.opts, err)
@@ -147,7 +150,32 @@ func TestWaitFor(t *testing.T) {
 		t.Fatalf("changed: %+v, %v", r, err)
 	}
 
-	for _, bad := range []ops.Condition{{Op: "eq"}, {Op: "about", Value: "1"}} {
+	// Canceled (not timed out): the context error, not a check failure.
+	cctx, ccancel := context.WithCancel(ctx)
+	time.AfterFunc(100*time.Millisecond, ccancel)
+	if _, err := o.WaitFor(cctx, "t", "counter", ops.Condition{Value: "99"}, ops.ValueOptions{}, 20*time.Millisecond); !errors.Is(err, context.Canceled) || errors.Is(err, ops.ErrCheckFailed) {
+		t.Fatalf("canceled: %v", err)
+	}
+
+	// The timeout reports the number of polls.
+	wctx, cancel = context.WithTimeout(ctx, 150*time.Millisecond)
+	r, err = o.WaitFor(wctx, "t", "counter", ops.Condition{Value: "99"}, ops.ValueOptions{}, 20*time.Millisecond)
+	cancel()
+	if !errors.Is(err, ops.ErrCheckFailed) || r.Polls < 2 || r.ElapsedMS < 100 || !strings.Contains(err.Error(), "polls") {
+		t.Fatalf("polls: %+v, %v", r, err)
+	}
+
+	// No read succeeds before the deadline: still a check failure.
+	srv.SetDelay(300 * time.Millisecond)
+	wctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+	r, err = o.WaitFor(wctx, "t", "counter", ops.Condition{Value: "99"}, ops.ValueOptions{}, 20*time.Millisecond)
+	cancel()
+	srv.SetDelay(0)
+	if !errors.Is(err, ops.ErrCheckFailed) || r == nil || r.Value != nil || !strings.Contains(err.Error(), "none read") {
+		t.Fatalf("first read past deadline: %+v, %v", r, err)
+	}
+
+	for _, bad := range []ops.Condition{{Op: "eq"}, {Op: "about", Value: "1"}, {Op: "changed", Value: "1"}} {
 		if _, err := o.WaitFor(ctx, "t", "counter", bad, ops.ValueOptions{}, 0); !errors.Is(err, ops.ErrUsage) {
 			t.Errorf("%+v: %v", bad, err)
 		}
@@ -172,6 +200,13 @@ func TestCompare(t *testing.T) {
 		{false, "ne", "1", true},
 		{"MODE_RUN", "eq", "MODE_RUN", true},
 		{"a", "ne", "b", true},
+		{symbols.Enum{Name: "MODE_RUN", Value: 1}, "eq", "MODE_RUN", true},
+		{symbols.Enum{Name: "MODE_RUN", Value: 1}, "ne", "MODE_IDLE", true},
+		{symbols.Enum{Name: "MODE_RUN", Value: 1}, "eq", "1", true},
+		{symbols.Enum{Name: "MODE_RUN", Value: 1}, "ge", "1", true},
+		{symbols.Enum{Value: 7}, "gt", "5", true},
+		{float32(0.1), "eq", "0.1", true},
+		{float32(1.5), "lt", "2", true},
 	} {
 		got, err := ops.Compare(tc.v, tc.v, ops.Condition{Op: tc.op, Value: tc.lit})
 		if err != nil || got != tc.want {
@@ -184,6 +219,7 @@ func TestCompare(t *testing.T) {
 		l  string
 	}{
 		{"x", "lt", "y"}, {true, "gt", "true"}, {int64(1), "eq", "one"}, {[]any{1}, "eq", "1"},
+		{symbols.Enum{Name: "MODE_RUN", Value: 1}, "lt", "MODE_IDLE"},
 	} {
 		if _, err := ops.Compare(bad.v, bad.v, ops.Condition{Op: bad.op, Value: bad.l}); !errors.Is(err, ops.ErrUsage) {
 			t.Errorf("%v %s %s accepted", bad.v, bad.op, bad.l)

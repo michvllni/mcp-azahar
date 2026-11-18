@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/michvllni/mcp-azahar/internal/capture"
 	"github.com/michvllni/mcp-azahar/internal/ops"
+	"github.com/michvllni/mcp-azahar/internal/rpc"
 	"github.com/michvllni/mcp-azahar/internal/symbols"
 )
 
@@ -176,26 +178,154 @@ func Parse(r io.Reader) (*File, error) {
 		}
 		return nil, fmt.Errorf("%w: %w", ops.ErrUsage, err)
 	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%w: only one YAML document per sequence file", ops.ErrUsage)
+	}
 	if len(f.Steps) == 0 {
 		return nil, fmt.Errorf("%w: sequence has no steps", ops.ErrUsage)
 	}
 	for i := range f.Steps {
-		if _, err := f.Steps[i].action(); err != nil {
-			return nil, fmt.Errorf("%w: step %d: %w", ops.ErrUsage, i+1, err)
+		if err := f.Steps[i].validate(); err != nil {
+			return nil, stepError(i, err)
 		}
 	}
 	return &f, nil
 }
 
+// stepError reports an invalid step as a usage error, without repeating
+// the "invalid arguments" prefix of ops errors.
+func stepError(i int, err error) error {
+	msg := strings.TrimPrefix(err.Error(), ops.ErrUsage.Error()+": ")
+	return fmt.Errorf("%w: step %d: %s", ops.ErrUsage, i+1, msg)
+}
+
+// validate checks a step completely before anything runs, so a typo in
+// step 9 does not fail the run after steps 1..8 changed the emulator.
+func (s *Step) validate() error {
+	action, err := s.action()
+	if err != nil {
+		return err
+	}
+	if s.For != 0 && action != "press" {
+		return fmt.Errorf("for belongs to press (touch and circle_pad have their own for)")
+	}
+	switch action {
+	case "press":
+		return buttons(*s.Press, false)
+	case "hold":
+		return buttons(*s.Hold, false)
+	case "release":
+		return buttons(*s.Release, true)
+	case "touch":
+		t := s.Touch
+		if t.X < 0 || t.Y < 0 || t.X > rpc.TouchMaxX || t.Y > rpc.TouchMaxY {
+			return fmt.Errorf("touch (%d, %d) outside the bottom screen (0..%d, 0..%d)", t.X, t.Y, rpc.TouchMaxX, rpc.TouchMaxY)
+		}
+		return holdOrFor(t)
+	case "circle_pad":
+		c, m := s.CirclePad, rpc.CirclePadMax
+		if c.X < -m || c.X > m || c.Y < -m || c.Y > m {
+			return fmt.Errorf("circle pad (%d, %d) outside -%d..%d", c.X, c.Y, m, m)
+		}
+		return holdOrFor(c)
+	case "screenshot":
+		if _, err := capture.ParseScreens(s.Screenshot.Screen); err != nil {
+			return err
+		}
+		if s.Screenshot.Output == "" {
+			return errors.New("screenshot needs output")
+		}
+		if s.Screenshot.Scale < 0 || s.Screenshot.Scale > rpc.MaxScreenshotScale {
+			return fmt.Errorf("scale %d outside 0..%d", s.Screenshot.Scale, rpc.MaxScreenshotScale)
+		}
+	case "write":
+		if _, err := ops.ParseAddress(s.Write.Address); err != nil {
+			return err
+		}
+		if _, err := ops.ParseBytes(s.Write.Bytes); err != nil {
+			return err
+		}
+	case "assert":
+		if s.Assert.Op == "changed" {
+			return errors.New("assert cannot use changed; use wait_for")
+		}
+		return s.Assert.validate()
+	case "wait_for":
+		return s.WaitFor.validate()
+	case "save_state", "load_state":
+		slot := s.Save
+		if slot == nil {
+			slot = s.Load
+		}
+		if *slot < 0 || *slot >= rpc.SaveStateSlots {
+			return fmt.Errorf("slot %d outside 0..%d", *slot, rpc.SaveStateSlots-1)
+		}
+	case "log_contains":
+		if s.LogContains.Text == "" {
+			return errors.New("log_contains needs text")
+		}
+	}
+	return nil
+}
+
+func buttons(names Buttons, allowAll bool) error {
+	if allowAll && len(names) == 1 && strings.EqualFold(names[0], "all") {
+		return nil
+	}
+	if len(names) == 0 && !allowAll {
+		return errors.New("no buttons")
+	}
+	_, err := ops.ParseButtons(names)
+	return err
+}
+
+func holdOrFor(p *XY) error {
+	if p.Hold && p.For != 0 {
+		return errors.New("hold and for exclude each other")
+	}
+	return nil
+}
+
+func (c *Check) validate() error {
+	if c.Target == "" {
+		return errors.New("target missing")
+	}
+	switch c.Op {
+	case "", "eq", "ne", "lt", "le", "gt", "ge":
+		if c.Value == "" {
+			return fmt.Errorf("value missing")
+		}
+	case "changed":
+		if c.Value != "" {
+			return errors.New("changed takes no value")
+		}
+	default:
+		return fmt.Errorf("unknown op %q (eq, ne, lt, le, gt, ge, changed)", c.Op)
+	}
+	if c.Type != "" {
+		if _, err := symbols.Scalar(c.Type).Size(); err != nil {
+			return err
+		}
+	}
+	if c.Len < 0 {
+		return errors.New("negative len")
+	}
+	return nil
+}
+
 // StepResult reports one executed step.
 type StepResult struct {
-	Index    int    `json:"index"` // 1-based
-	Name     string `json:"name,omitempty"`
-	Action   string `json:"action"`
-	OK       bool   `json:"ok"`
-	Error    string `json:"error,omitempty"`
-	Detail   any    `json:"detail,omitempty"`
-	Duration string `json:"duration"`
+	Index  int    `json:"index"` // 1-based
+	Name   string `json:"name,omitempty"`
+	Action string `json:"action"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
+	// ErrorKind is "check" for a failed assert/wait_for/log_contains and
+	// "error" for anything else.
+	ErrorKind  string `json:"error_kind,omitempty"`
+	Detail     any    `json:"detail,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 // Report is the result of a run.
@@ -216,26 +346,55 @@ type Options struct {
 	ELF string
 	// OnStep is called after each step (for progress output).
 	OnStep func(StepResult)
+	// RestrictPaths rejects file paths (elf, screenshot output) that are
+	// absolute or lead out of Dir (for callers like an MCP server that must
+	// not let a sequence touch arbitrary files).
+	RestrictPaths bool
 }
 
 // Run executes the steps against a session. It returns the report and, if
 // a step failed, an error wrapping ops.ErrCheckFailed (assertions) or the
 // step's error.
 func Run(ctx context.Context, o *ops.Ops, session string, f *File, opt Options) (*Report, error) {
-	elf := opt.ELF
-	if elf == "" && f.ELF != "" {
-		elf = rel(opt.Dir, f.ELF)
+	for i := range f.Steps {
+		if err := f.Steps[i].validate(); err != nil {
+			return nil, stepError(i, err)
+		}
+	}
+	r := &runner{o: o, session: session, dir: opt.Dir, restrict: opt.RestrictPaths}
+	r.elf = opt.ELF
+	if r.elf == "" && f.ELF != "" {
+		p, err := r.path(f.ELF)
+		if err != nil {
+			return nil, err
+		}
+		r.elf = p
+	}
+	for i := range f.Steps {
+		if f.Steps[i].LogContains != nil {
+			// log_contains only matches lines written during the run.
+			off, err := o.LogEnd(session)
+			if err != nil {
+				return nil, err
+			}
+			r.logOff = off
+			break
+		}
 	}
 	rep := &Report{Name: f.Name, Passed: true, Steps: []StepResult{}}
 	for i := range f.Steps {
 		st := &f.Steps[i]
 		action, _ := st.action()
 		start := time.Now()
-		detail, err := runStep(ctx, o, session, st, action, elf, opt.Dir)
+		detail, err := r.step(ctx, st, action)
 		res := StepResult{Index: i + 1, Name: st.Name, Action: action, OK: err == nil, Detail: detail,
-			Duration: time.Since(start).Round(time.Millisecond).String()}
+			DurationMS: time.Since(start).Milliseconds()}
 		if err != nil {
 			res.Error = err.Error()
+			res.ErrorKind = "error"
+			if errors.Is(err, ops.ErrCheckFailed) {
+				res.ErrorKind = "check"
+			}
 		}
 		rep.Steps = append(rep.Steps, res)
 		if opt.OnStep != nil {
@@ -259,14 +418,30 @@ func Run(ctx context.Context, o *ops.Ops, session string, f *File, opt Options) 
 	return rep, nil
 }
 
-func rel(dir, p string) string {
-	if p == "" || filepath.IsAbs(p) || dir == "" {
-		return p
-	}
-	return filepath.Join(dir, p)
+// runner holds the state of one run.
+type runner struct {
+	o        *ops.Ops
+	session  string
+	dir, elf string
+	restrict bool
+	logOff   int64 // where the next log_contains starts searching
 }
 
-func runStep(ctx context.Context, o *ops.Ops, session string, st *Step, action, elf, dir string) (any, error) {
+// path resolves a file path of the sequence relative to its directory.
+func (r *runner) path(p string) (string, error) {
+	if r.restrict {
+		if filepath.IsAbs(p) || !filepath.IsLocal(p) {
+			return "", fmt.Errorf("%w: path %q must be relative and stay inside the sequence's directory", ops.ErrUsage, p)
+		}
+	}
+	if filepath.IsAbs(p) || r.dir == "" {
+		return p, nil
+	}
+	return filepath.Join(r.dir, p), nil
+}
+
+func (r *runner) step(ctx context.Context, st *Step, action string) (any, error) {
+	o, session, elf := r.o, r.session, r.elf
 	switch action {
 	case "press":
 		in, err := ops.ParseButtons(*st.Press)
@@ -307,14 +482,15 @@ func runStep(ctx context.Context, o *ops.Ops, session string, st *Step, action, 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ops.ErrUsage, err)
 		}
-		if s.Output == "" {
-			return nil, fmt.Errorf("%w: screenshot needs output", ops.ErrUsage)
+		out, err := r.path(s.Output)
+		if err != nil {
+			return nil, err
 		}
 		shots, err := o.Screenshot(ctx, session, capture.Request{Screens: sc, Scale: s.Scale})
 		if err != nil {
 			return nil, err
 		}
-		return ops.SaveScreenshot(shots, rel(dir, s.Output), s.Split)
+		return ops.SaveScreenshot(shots, out, s.Split)
 	case "write":
 		addr, err := ops.ParseAddress(st.Write.Address)
 		if err != nil {
@@ -327,9 +503,6 @@ func runStep(ctx context.Context, o *ops.Ops, session string, st *Step, action, 
 		return nil, o.WriteMemory(ctx, session, addr, b)
 	case "assert":
 		c := st.Assert
-		if c.Op == "changed" {
-			return nil, fmt.Errorf("%w: assert cannot use changed; use wait_for", ops.ErrUsage)
-		}
 		v, err := o.ReadValue(ctx, session, c.Target, valueOpts(c, elf))
 		if err != nil {
 			return nil, err
@@ -360,7 +533,7 @@ func runStep(ctx context.Context, o *ops.Ops, session string, st *Step, action, 
 	case "load_state":
 		return nil, o.LoadState(ctx, session, *st.Load)
 	case "log_contains":
-		return logContains(ctx, o, session, st.LogContains.Text, time.Duration(st.LogContains.Timeout))
+		return r.logContains(ctx, st.LogContains.Text, time.Duration(st.LogContains.Timeout))
 	}
 	return nil, fmt.Errorf("%w: unknown action %q", ops.ErrUsage, action)
 }
@@ -375,25 +548,32 @@ func showValue(v any) string {
 	return b.String()
 }
 
-// logContains waits until the session log has a line containing text.
-func logContains(ctx context.Context, o *ops.Ops, session, text string, timeout time.Duration) (any, error) {
-	if text == "" {
-		return nil, fmt.Errorf("%w: log_contains needs text", ops.ErrUsage)
-	}
+// logContains waits until a log line written since the run started (and
+// after the previous log_contains match) contains text.
+func (r *runner) logContains(ctx context.Context, text string, timeout time.Duration) (any, error) {
 	if timeout == 0 {
 		timeout = ops.DefaultWait
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		res, err := o.Logs(ctx, session, ops.LogQuery{Contains: text, Tail: 1})
-		if err != nil {
+		res, err := r.o.Logs(ctx, r.session, ops.LogQuery{From: r.logOff, Contains: text, First: true})
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		if len(res.Lines) > 0 {
-			return map[string]string{"line": res.Lines[0]}, nil
+		if err == nil {
+			if res.Restarted {
+				r.logOff = 0
+			}
+			if len(res.Lines) > 0 {
+				r.logOff = res.Offset
+				return map[string]string{"line": res.Lines[0]}, nil
+			}
+			// Nothing matched: skip what was read, but never past a line
+			// that is still being written (Logs leaves it out).
+			r.logOff = res.Offset
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("%w: no log line contains %q within %v", ops.ErrCheckFailed, text, timeout)
+			return nil, fmt.Errorf("%w: no new log line contains %q within %v", ops.ErrCheckFailed, text, timeout)
 		}
 		select {
 		case <-ctx.Done():

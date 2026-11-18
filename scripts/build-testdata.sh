@@ -11,7 +11,11 @@
 #   ARM bare-metal toolchain (gcc-arm-none-eabi, in the dev container):
 #   32-bit little-endian ARM with DWARF, linked at 0x00100000 like a 3DSX,
 #   and symbols-nodebug.elf, the same without DWARF.
-#   The ELF is committed so tests do not need the toolchain; rerun this
+#   Also builds realworld.elf (DWARF 5) and realworld-dwarf2.elf (DWARF 2)
+#   from realworld/*.c and realworld/c.cpp: several C and C++ units with
+#   bitfields, a flexible array member, file statics that share names with
+#   globals, a static local and namespace/class statics.
+#   The ELFs are committed so tests do not need the toolchain; rerun this
 #   after changing the source and commit both.
 #
 # OPTIONS
@@ -38,4 +42,12 @@ arm-none-eabi-gcc -march=armv6k -mfloat-abi=hard -mfpu=vfp -g -O0 \
   -Wl,--build-id=none -fno-ident \
   -o symbols.elf symbols.c
 arm-none-eabi-strip --strip-debug -o symbols-nodebug.elf symbols.elf
-echo "built $(pwd)/symbols.elf and symbols-nodebug.elf"
+for dw in 5 2; do
+  out=realworld.elf
+  [ "$dw" = 5 ] || out="realworld-dwarf$dw.elf"
+  arm-none-eabi-g++ -march=armv6k -mfloat-abi=hard -mfpu=vfp "-gdwarf-$dw" -O0 \
+    -ffreestanding -nostdlib -fno-exceptions -fno-rtti \
+    -Wl,-Ttext=0x00100000 -Wl,-e,main -Wl,--build-id=none -fno-ident \
+    -o "$out" -x c realworld/a.c realworld/b.c -x c++ realworld/c.cpp
+done
+echo "built $(pwd)/symbols.elf, symbols-nodebug.elf, realworld.elf and realworld-dwarf2.elf"

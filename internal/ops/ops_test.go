@@ -604,7 +604,23 @@ func TestSaveStateWaitsForFile(t *testing.T) {
 	if d := time.Since(start); d < 200*time.Millisecond {
 		t.Fatalf("SaveState returned after %v, before the file was written", d)
 	}
+	// Overwriting an existing state in place with the same size and
+	// modification time (coarse timestamps) still counts as written.
+	f := filepath.Join(states, "0000000000000000.02.cst")
+	mod := time.Now().Add(-time.Hour).Truncate(time.Second)
+	_ = os.Chtimes(f, mod, mod)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = os.WriteFile(f, []byte("STATE"), 0o600)
+		_ = os.Chtimes(f, mod, mod)
+	}()
+	if err := o.SaveState(ctx, "t", 2); err != nil {
+		t.Fatalf("rewrite in place: %v", err)
+	}
 	o.SaveWait = 300 * time.Millisecond
+	if err := o.SaveState(ctx, "t", 2); err == nil || !strings.Contains(err.Error(), "did not write") {
+		t.Fatalf("unchanged existing file counted as written: %v", err)
+	}
 	if err := o.SaveState(ctx, "t", 5); err == nil || !strings.Contains(err.Error(), "did not write") {
 		t.Fatalf("no file written: %v", err)
 	}

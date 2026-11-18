@@ -25,6 +25,9 @@ type LogQuery struct {
 	Tail int
 	// Contains keeps lines containing this text (case-sensitive).
 	Contains string
+	// First stops after the first matching line; Offset is then right
+	// after it, so the next call continues behind the match.
+	First bool
 }
 
 // LogResult holds matching complete lines. An unfinished last line is left
@@ -92,6 +95,9 @@ func readLog(ctx context.Context, path string, q LogQuery) (*LogResult, error) {
 			continue
 		}
 		res.Lines = append(res.Lines, l)
+		if q.First {
+			break
+		}
 		if q.Tail > 0 && len(res.Lines) > 2*q.Tail {
 			// Compact now and then, so memory stays bounded on large logs.
 			res.Lines = append(res.Lines[:0:0], res.Lines[len(res.Lines)-q.Tail:]...)
@@ -101,6 +107,21 @@ func readLog(ctx context.Context, path string, q LogQuery) (*LogResult, error) {
 		res.Lines = res.Lines[len(res.Lines)-q.Tail:]
 	}
 	return res, nil
+}
+
+// LogEnd returns the offset after the last complete line of the session's
+// log (0 if the file does not exist yet): pass it as LogQuery.From to see
+// only lines written from now on.
+func (o *Ops) LogEnd(name string) (int64, error) {
+	p, err := o.logPath(name)
+	if err != nil {
+		return 0, err
+	}
+	off, err := completeLinesEnd(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return off, err
 }
 
 // FollowLogs calls emit for matching lines as they are appended, starting

@@ -19,8 +19,10 @@ import (
 
 const targetHelp = `A target is a symbol expression from the app's ELF (launch/attach --elf, or
 --elf): a name, then .field and [index] parts, e.g. test_state.touch.x or
-table[2]; fields and indices need DWARF (-g). It can also be an address (hex
-0x... or decimal) read with --type (default u32).
+table[2]; fields and indices need DWARF (-g). C++ members and namespaces are
+written ns::name, static locals func::name, and a static that shares its
+name with another variable file.c:name. It can also be an address (hex 0x...
+or decimal) read with --type (default u32; string and bytes also need --len).
 Types: u8 u16 u32 u64 s8 s16 s32 s64 f32 f64 bool string bytes.`
 
 func scriptingCommands(a *app) []*cobra.Command {
@@ -80,7 +82,7 @@ func scriptingCommands(a *app) []*cobra.Command {
 	}
 	read.Flags().StringVar(&vo.elf, "elf", "", "ELF file instead of the session's")
 	read.Flags().StringVar(&vo.typ, "type", "", "decode as this type instead of the DWARF type")
-	read.Flags().IntVar(&vo.n, "len", 0, "byte count for string/bytes or untyped symbols")
+	read.Flags().IntVar(&vo.n, "len", 0, "byte count for --type string/bytes, or to read a symbol as raw bytes")
 
 	var wo struct {
 		elf, typ, op string
@@ -112,12 +114,16 @@ booleans true/false; strings and enum names compare with eq/ne. Waits up to
 			r, err := o.WaitFor(ctx, a.session, args[0], cond, ops.ValueOptions{ELF: wo.elf, Type: symbols.Scalar(wo.typ), Len: wo.n}, wo.interval)
 			if r != nil {
 				if perr := a.print(cmd.OutOrStdout(), r, func(w io.Writer) {
+					if r.Value == nil {
+						_, _ = fmt.Fprintf(w, "timed out: %s could not be read after %v\n", args[0], r.Elapsed.Round(time.Millisecond))
+						return
+					}
 					b, _ := json.Marshal(r.Value.Value)
 					state := "reached"
 					if err != nil {
 						state = "timed out"
 					}
-					_, _ = fmt.Fprintf(w, "%s: %s = %s after %v\n", state, r.Value.Target, b, r.Elapsed.Round(time.Millisecond))
+					_, _ = fmt.Fprintf(w, "%s: %s = %s after %v (%d polls)\n", state, r.Value.Target, b, r.Elapsed.Round(time.Millisecond), r.Polls)
 				}); perr != nil {
 					return perr
 				}
@@ -137,7 +143,10 @@ booleans true/false; strings and enum names compare with eq/ne. Waits up to
 		Short: "Run a scripted test (YAML or JSON steps); exit 3 if a check fails",
 		Long: `Run the steps of a sequence file against the session, stopping at the first
 failure. Exit code 0 if all steps pass, 3 if an assert/wait_for/log_contains
-check fails, 1 for other errors. Relative paths in the file are relative to it.
+check fails, 1 for other errors, 2 if the file is invalid (all steps are
+checked before the first runs). Relative paths in the file are relative to it.
+log_contains only matches lines written after the run started, each one after
+the previous match.
 
 Example file:
   name: smoke
@@ -196,7 +205,7 @@ Each step has exactly one action and an optional name.`,
 				if s.Name != "" {
 					label += " " + s.Name
 				}
-				_, _ = fmt.Fprintf(w, "%s %2d %s (%s)\n", mark, s.Index, label, s.Duration)
+				_, _ = fmt.Fprintf(w, "%s %2d %s (%v)\n", mark, s.Index, label, time.Duration(s.DurationMS)*time.Millisecond)
 				if s.Error != "" {
 					_, _ = fmt.Fprintf(w, "        %s\n", s.Error)
 				}
