@@ -36,3 +36,5 @@ go.work.sum
 # Build output
 /mcp-azahar
 /dist/
+testdata/fixture/*.png
+testdata/fixture/build/

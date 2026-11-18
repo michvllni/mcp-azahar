@@ -9,7 +9,9 @@ import (
 
 // seedConfig is written to <user>/config/qt-config.ini before the first
 // start (PROTOCOL.md §7): RPC on, single-screen layout so screenshots are
-// exactly one screen (DECISIONS.md D4), no update-check or close dialogs.
+// exactly one screen (DECISIONS.md D4), no update-check or close dialogs,
+// and the app's svcOutputDebugString lines (Debug.Emulated, logged at
+// Debug level) in the log.
 // No "\default" keys: "\default=true" would make Azahar ignore the value.
 const seedConfig = `[Debugging]
 enable_rpc_server=true
@@ -18,6 +20,7 @@ layout_option=1
 swap_screen=false
 [Miscellaneous]
 check_for_update_on_start=false
+log_filter=*:Info Debug.Emulated:Debug
 [UI]
 confirmClose=false
 `
