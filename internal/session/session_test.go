@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,55 @@ func TestHostLockRefusesSymlink(t *testing.T) {
 	}
 	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("symlink target mode changed to %v", fi.Mode().Perm())
+	}
+}
+
+func TestZombieLeaderWithLiveThreadsIsAlive(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux /proc semantics")
+	}
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	// The main thread exits with pthread_exit while another thread blocks on
+	// stdin: the leader is a zombie, but the process (and its file
+	// descriptors) still exist until stdin is closed.
+	cmd := exec.CommandContext(t.Context(), py, "-c",
+		"import threading, ctypes, sys\n"+
+			"threading.Thread(target=sys.stdin.read).start()\n"+
+			"ctypes.CDLL(None).pthread_exit(None)\n")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Skip(err)
+	}
+	p := ProcFor(cmd.Process.Pid)
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	// Wait until the main thread is a zombie.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, _ := os.ReadFile("/proc/" + strconv.Itoa(p.PID) + "/stat")
+		if i := strings.LastIndexByte(string(b), ')'); i > 0 && strings.HasPrefix(string(b[i+2:]), "Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Skip("main thread did not become a zombie")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !Alive(p) {
+		t.Fatal("process with a zombie main thread but a live thread reported dead")
+	}
+	// Let the other thread exit: then it is a plain zombie, i.e. dead.
+	_ = stdin.Close()
+	deadline = time.Now().Add(5 * time.Second)
+	for Alive(p) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if Alive(p) {
+		t.Fatal("process still alive after all threads exited")
 	}
 }
