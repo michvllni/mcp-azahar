@@ -23,8 +23,13 @@
 #   sudo .devcontainer/install-go-tools.sh -l 2.15.0 -r 2.20.2 -a 1.7.12
 set -euo pipefail
 
+# Pinned versions, single source for the dev container and CI; Renovate
+# updates them via the annotations (see .github/renovate.json5).
+# renovate: datasource=github-releases depName=golangci/golangci-lint
 lint="${GOLANGCI_LINT_VERSION:-2.15.0}"
+# renovate: datasource=github-releases depName=goreleaser/goreleaser
 rel="${GORELEASER_VERSION:-2.20.2}"
+# renovate: datasource=github-releases depName=rhysd/actionlint
 al="${ACTIONLINT_VERSION:-1.7.12}"
 dir="/usr/local/bin"
 
