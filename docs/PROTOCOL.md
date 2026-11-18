@@ -227,8 +227,9 @@ the selected process (§5.4).
   playing: `<title_id>.movie<movie_id>.<slot>.cst`). *Observed*:
   `states/0000000000000000.01.cst`.
 - After LoadState, expect one lost request and re-select the process
-  (§1). *Observed*: memory restored about 2 s after the request, including a
-  2 s client timeout; the real duration is unknown.
+  (§1). *Observed*: with the minimal test app, a LoadState including the
+  server restart and re-selection took 0.83 s (Phase 2 live test); larger
+  apps will take longer.
 - **Not verified:** whether the SetInput override survives a load.
 
 ### 5.8 SetInput (11)

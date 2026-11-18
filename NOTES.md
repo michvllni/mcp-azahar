@@ -9,7 +9,11 @@ at the top of each section.
   on).
 - Phase 1 (protocol research): done, see `docs/PROTOCOL.md`. D4 decided
   (RPC screenshots). Parallel sessions/RPC isolation is deferred until
-  before Phase 3 (see "Open questions"). Next: Phase 2.
+  before Phase 3 (see "Open questions").
+- Phase 2 (RPC client `internal/rpc`): done. Unit tests against
+  `internal/rpc/fakeserver` (88 % coverage), and a live test
+  (`-tags integration`) passed against Azahar 2127.0-rc3. Next: Phase 3,
+  after the parallel-sessions decision.
 
 ## Blockers
 
@@ -68,6 +72,21 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 2
+- Client design: one `net.Conn` from a `Dialer` (UDP today; any
+  datagram-preserving conn such as `unixgram` works, so a per-session relay
+  can plug in later), requests serialized with a mutex, random starting
+  request ID, replies matched by version+ID+type, per-attempt timeout
+  (default 2 s) with 3 resends for idempotent requests only, context
+  cancellation interrupts a blocking read via `context.AfterFunc`.
+- `WriteMemoryVerified` reads back, because Azahar never reports refused
+  writes. Live-confirmed for `0x1FF80000`.
+- `LoadState` with a selected process waits until `GetProcess` no longer
+  returns it (server recreated), then selects it again. Live: 0.83 s for
+  the minimal 3DSX, including one lost request.
+- The live test passed against the 2127.0-rc3 AppImage with the Phase 1
+  research 3DSX (scratch address `0x101000`).
+
 ### Phase 1 (details and sources in `docs/PROTOCOL.md`)
 - Source: azahar-emu/azahar `2127.0-rc3` = `11eceda5`, shallow clone outside
   the repo. Every RPC request was exercised against the AppImage under Xvfb
