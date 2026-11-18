@@ -123,8 +123,9 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   `0.0.0-bootstrap` showed up publicly only as npm's `0.0.0-stage`
   placeholder ("Temporary package placeholder for staged publishing"),
   with nothing in `npm stage list`: undocumented (the docs tie the
-  placeholder to `npm stage publish`). Those 4 unscoped packages are
-  unused. The platform packages moved to `@michvllni/`; all 7 were
+  placeholder to `npm stage publish`). Those 4 unscoped packages were
+  unpublished by the maintainer on 2026-11-18 (`npm unpublish --force`
+  needs 2FA via a browser link, so it cannot run unattended). The platform packages moved to `@michvllni/`; all 7 were
   created with `npm stage publish --access public --tag bootstrap` (no
   2FA needed; staged ids kept unapproved) and `npm trust github ...
   --allow-publish` (stored as permissions "publish, stage publish";
