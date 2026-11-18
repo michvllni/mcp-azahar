@@ -19,11 +19,11 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "mcp-azahar-linux-x64": "0.0.0",
-    "mcp-azahar-linux-arm64": "0.0.0",
-    "mcp-azahar-darwin-x64": "0.0.0",
-    "mcp-azahar-darwin-arm64": "0.0.0",
-    "mcp-azahar-win32-x64": "0.0.0",
-    "mcp-azahar-win32-arm64": "0.0.0"
+    "@michvllni/mcp-azahar-linux-x64": "0.0.0",
+    "@michvllni/mcp-azahar-linux-arm64": "0.0.0",
+    "@michvllni/mcp-azahar-darwin-x64": "0.0.0",
+    "@michvllni/mcp-azahar-darwin-arm64": "0.0.0",
+    "@michvllni/mcp-azahar-win32-x64": "0.0.0",
+    "@michvllni/mcp-azahar-win32-arm64": "0.0.0"
   }
 }

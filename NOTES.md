@@ -31,7 +31,8 @@ at the top of each section.
 - Phase 8 (release packaging): done, reviewed: container image (PR #17),
   npm with trusted publishing (PR #21), MCP Registry (PR #24), README
   setup for Claude Code/Desktop. The first release (v0.1.0) is the
-  maintainer's: npm bootstrap, publish, ghcr public, re-run registry.
+  maintainer's: publish by 2026-11-20 (npm trust expiry), ghcr public,
+  re-run registry.
 - PLAN "Definition of done": go test, the integration suite, the green
   `smoke.yaml` run and an MCP client launching the fixture, pressing
   buttons, getting both screens and reading `test_state` are covered by
@@ -115,6 +116,20 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   linux/amd64, otherwise re-run the job after a fix.
 
 ### Phase 8b (npm)
+- Bootstrap, 2026-11-18: `scripts/npm-bootstrap.sh` (since removed)
+  created `mcp-azahar-linux-x64`, `-linux-arm64`, `-darwin-x64` and
+  `-darwin-arm64` with trust, then npm refused `mcp-azahar-win32-x64`:
+  "Package name triggered spam detection". Its `npm publish` of
+  `0.0.0-bootstrap` showed up publicly only as npm's `0.0.0-stage`
+  placeholder ("Temporary package placeholder for staged publishing"),
+  with nothing in `npm stage list`: undocumented (the docs tie the
+  placeholder to `npm stage publish`). Those 4 unscoped packages are
+  unused. The platform packages moved to `@michvllni/`; all 7 were
+  created with `npm stage publish --access public --tag bootstrap` (no
+  2FA needed; staged ids kept unapproved) and `npm trust github ...
+  --allow-publish` (stored as permissions "publish, stage publish";
+  verified with `npm trust list`). The trust configurations expire
+  unless a publish succeeds by 2026-11-20.
 - Layout per D10: wrapper `mcp-azahar` (Node script, no dependencies of
   its own) with optionalDependencies on six platform packages built from
   goreleaser's `dist/artifacts.json`; npm installs only the one whose

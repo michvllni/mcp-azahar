@@ -8,13 +8,14 @@
 #
 # DESCRIPTION
 #   Builds one package per platform binary goreleaser produced
-#   (mcp-azahar-<linux|darwin|win32>-<x64|arm64>, read from
-#   DIST/artifacts.json) and the wrapper mcp-azahar from
+#   (@michvllni/mcp-azahar-<linux|darwin|win32>-<x64|arm64>, read from
+#   DIST/artifacts.json; scoped because npm's spam check refused a series of
+#   similar unscoped names) and the wrapper mcp-azahar from
 #   packaging/npm/mcp-azahar, all at VERSION, into OUT. With -p it publishes
 #   them, platform packages first, skipping versions that already exist, so
 #   a failed release job can be re-run. Publishing uses npm trusted
-#   publishing (OIDC, provenance) in the release workflow; see
-#   scripts/npm-bootstrap.sh for the one-time setup.
+#   publishing (OIDC, provenance) in the release workflow; each package
+#   needs a trusted publisher on npmjs.com (AGENTS.md "CI and releases").
 #
 # OPTIONS
 #   -v VERSION  Package version (SemVer, without "v"; required)
@@ -23,7 +24,7 @@
 #   -p          Publish the packages after building them
 #   -t TAG      npm dist-tag for -p (default: latest, or next for versions
 #               with a pre-release suffix; a pre-release also becomes
-#               latest while a package has no real release yet)
+#               latest while a package has only a 0.0.0-* placeholder)
 #   -n          With -p: npm publish --dry-run
 #   -h          Show this help
 #
@@ -64,13 +65,13 @@ if [ -z "$tag" ]; then
 fi
 
 # platform_package GOOS GOARCH BINARY: write the package for one binary to
-# $out and print its name.
+# $out/<name without scope> and print its name.
 platform_package() {
   local os cpu name dir exe
   case "$1" in windows) os=win32 ;; *) os="$1" ;; esac
   case "$2" in amd64) cpu=x64 ;; *) cpu="$2" ;; esac
-  name="mcp-azahar-$os-$cpu"
-  dir="$out/$name"
+  name="@michvllni/mcp-azahar-$os-$cpu"
+  dir="$out/$(basename "$name")"
   exe="$(basename "$3")"
   mkdir -p "$dir/bin"
   cp "$3" "$dir/bin/$exe"
@@ -131,8 +132,9 @@ published() {
 }
 
 # tag_for NAME: the dist-tag to publish NAME with. A pre-release also gets
-# "latest" while the package has no real release yet (only the bootstrap
-# placeholder), so `npx mcp-azahar` always finds a working version.
+# "latest" while the package has no real release yet (only a 0.0.0-*
+# placeholder from the trust setup or npm's staged publishing), so
+# `npx mcp-azahar` always finds a working version.
 tag_for() {
   local latest
   if [ "$tag" != next ] || $explicit_tag; then
@@ -141,7 +143,7 @@ tag_for() {
   fi
   latest="$(npm view "$1" dist-tags.latest 2>/dev/null || true)"
   case "$latest" in
-    "" | 0.0.0-bootstrap) echo latest ;;
+    "" | 0.0.0-*) echo latest ;;
     *) echo "$tag" ;;
   esac
 }
@@ -152,5 +154,5 @@ for name in "${platforms[@]}" mcp-azahar; do
     echo "$name@$version is already published, skipped" >&2
     continue
   fi
-  (cd "$out/$name" && npm publish --access public --tag "$(tag_for "$name")" "${dry[@]}")
+  (cd "$out/$(basename "$name")" && npm publish --access public --tag "$(tag_for "$name")" "${dry[@]}")
 done

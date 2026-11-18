@@ -210,7 +210,7 @@ stable; check its docs for current API). stdio transport.
     Azahar, Xvfb and Mesa; entrypoint defaults to `serve`; license texts
     inside; Azahar's unified source tarball attached to the release;
     version tags, `latest` only for non-prereleases;
-  - npm package `mcp-azahar` (+ `mcp-azahar-<os>-<arch>`) for
+  - npm package `mcp-azahar` (+ `@michvllni/mcp-azahar-<os>-<arch>`) for
     `npx -y mcp-azahar serve`, defaulting to `serve`, with provenance;
   - MCP Registry entry `io.github.michvllni/mcp-azahar` (npm + OCI),
     published last, after its packages exist;

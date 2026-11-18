@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // npm wrapper for mcp-azahar (DECISIONS.md D10): runs the binary from the
-// platform package npm installed (mcp-azahar-<platform>-<arch>, an
-// optionalDependency), passing arguments, stdio, signals and the exit code
+// platform package npm installed (@michvllni/mcp-azahar-<platform>-<arch>,
+// an optionalDependency), passing arguments, stdio, signals and the exit code
 // through. Without a command (no arguments, or only flags such as
 // `--allow-dir DIR`) it runs `serve`, so MCP clients can start it as
 // `npx -y mcp-azahar`.
@@ -12,12 +12,12 @@
 const { spawn } = require("node:child_process");
 
 const platforms = {
-  "linux x64": "mcp-azahar-linux-x64",
-  "linux arm64": "mcp-azahar-linux-arm64",
-  "darwin x64": "mcp-azahar-darwin-x64",
-  "darwin arm64": "mcp-azahar-darwin-arm64",
-  "win32 x64": "mcp-azahar-win32-x64",
-  "win32 arm64": "mcp-azahar-win32-arm64",
+  "linux x64": "@michvllni/mcp-azahar-linux-x64",
+  "linux arm64": "@michvllni/mcp-azahar-linux-arm64",
+  "darwin x64": "@michvllni/mcp-azahar-darwin-x64",
+  "darwin arm64": "@michvllni/mcp-azahar-darwin-arm64",
+  "win32 x64": "@michvllni/mcp-azahar-win32-x64",
+  "win32 arm64": "@michvllni/mcp-azahar-win32-arm64",
 };
 
 function binaryPath() {
