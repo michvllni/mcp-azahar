@@ -12,8 +12,10 @@ at the top of each section.
   RPC session per host, upstream request filed).
 - Phase 2 (RPC client `internal/rpc`): done, reviewed (PR #7 review
   findings fixed). Unit tests against `internal/rpc/fakeserver`, and a live
-  test (`-tags integration`) passed against Azahar 2127.0-rc3. Next:
-  Phase 3.
+  test (`-tags integration`) passed against Azahar 2127.0-rc3.
+- Phase 3 (sessions and process manager, `internal/session`,
+  `internal/emu`): implemented per D9; live launch test passed. Next:
+  Phase 4 (screenshots via RPC).
 
 ## Blockers
 
@@ -72,6 +74,53 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 3
+- `emu.Manager.Launch`, under the store lock plus a best-effort host lock
+  `/tmp/mcp-azahar-45987.lock` (shared by all users and state dirs; opened
+  without `O_CREAT` so `fs.protected_regular` allows it, never through a
+  symlink; skipped if it cannot be opened):
+  - checks the session name and the RPC port (holder named: session from
+    session files; on Linux the process via `/proc/net/udp` + `/proc/*/fd`);
+  - moves an existing `sessions/<name>.d` aside to `<name>.d.<timestamp>`
+    (kept save states or a crash log are never deleted);
+  - seeds `sessions/<name>.d/user/config/qt-config.ini` (PROTOCOL.md §7);
+  - starts Xvfb on the first free display from `:99` (Linux, unless a
+    display is given), trying the next display if Xvfb exits right away;
+  - starts Azahar detached with cwd = session dir (portable mode); `HOME`
+    is left alone (overriding it broke X auth on a user display);
+  - waits for RPC, then verifies ownership: it waits for Azahar's
+    `Starting RPC server` log line, rejects `Error starting UDP server`,
+    and on Linux requires every socket on the port to belong to the
+    started PID or a descendant; a socket whose owner is unreadable
+    (another user) or no socket at all counts as foreign. On macOS only the
+    log check applies, which depends on Azahar's log timing and is not
+    verified live.
+- `launch` refuses on Windows: Azahar takes its portable `user/` dir from
+  next to the executable there (`file_util.cpp:944-946`), so sessions
+  cannot get an isolated config with RPC enabled. `attach` works.
+- Process identity is PID plus start time on Linux (`/proc`), macOS
+  (sysctl) and Windows (creation time). Every cleanup (stop, prune, stale
+  removal, relaunch) also SIGKILLs what is left of a process group whose
+  leader exited (wrapper scripts without `exec`), only while the leader's
+  PID is free, so the group ID cannot have been reused.
+- Moved-aside session directories (`<name>.d.<timestamp>`) are never
+  deleted automatically; remove them by hand when no longer needed.
+- Unreadable session files: `launch` refuses, `stop` removes the file and
+  warns that its processes may still run.
+  Failures stop everything started and include the tail of Azahar's output
+  and log.
+- Live (2127.0-rc3, minimal 3DSX): launch 1.2 s; a second launch was
+  refused; bottom screenshot 320x240 (seed config applied); save wrote
+  `states/0000000000000000.01.cst`; load and stop worked, nothing left
+  running.
+- `emu.HasState` checks for a save state file before LoadState, because an
+  empty slot leaves Azahar stuck behind a modal dialog (Phase 2 finding).
+  Attached sessions cannot be checked (user dir unknown).
+- This workspace is still bookworm with the earlier live patch: `AppRun`
+  fails there (`checkrt` loads the bundled libstdc++, which needs glibc
+  2.38), so live tests here use `AZAHAR_BIN=/opt/azahar/usr/bin/azahar`. On
+  the trixie image `AppRun` works.
+
 ### Phase 2
 - Client design: one `net.Conn` from a `Dialer` (UDP today; any
   datagram-preserving conn such as `unixgram` works, so a per-session relay

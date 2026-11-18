@@ -39,6 +39,9 @@ type ScreenSource func(secondary bool, scale int) (w, h int, rgb []byte)
 // Config sets up a Server. Zero values give one process "fake" with PID 11,
 // a running app, and solid-color 400x240 / 320x240 screens.
 type Config struct {
+	// Addr is the UDP address to listen on (default "127.0.0.1:0", a
+	// random port).
+	Addr      string
 	Processes []rpc.Process
 	// NotRunning makes save/load state requests fail as with no app loaded.
 	NotRunning bool
@@ -97,8 +100,11 @@ func New(cfg Config) (*Server, error) {
 	if cfg.RestartGap <= 0 {
 		cfg.RestartGap = 50 * time.Millisecond
 	}
+	if cfg.Addr == "" {
+		cfg.Addr = "127.0.0.1:0"
+	}
 	var lc net.ListenConfig
-	conn, err := lc.ListenPacket(context.Background(), "udp", "127.0.0.1:0")
+	conn, err := lc.ListenPacket(context.Background(), "udp", cfg.Addr)
 	if err != nil {
 		return nil, err
 	}

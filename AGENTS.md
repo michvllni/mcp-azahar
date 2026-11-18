@@ -20,6 +20,8 @@ cmd/mcp-azahar/      thin Cobra front end (CLI; later also `serve` for MCP);
 internal/            all behavior; CLI and MCP call the same functions
   rpc/               Azahar RPC client (protocol v2, docs/PROTOCOL.md)
     fakeserver/      in-process fake Azahar RPC server for tests
+  session/           session files, host-wide lock, process liveness
+  emu/               launch/attach/stop/status of Azahar (+ Xvfb), D9 rules
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
@@ -30,8 +32,7 @@ docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
-Planned packages (see PLAN.md): `internal/session`, `internal/emu`,
-`internal/capture`, `internal/server`.
+Planned packages (see PLAN.md): `internal/capture`, `internal/server`.
 
 ## Build, test, lint
 ```sh
@@ -49,6 +50,17 @@ AZAHAR_RPC_ADDR=127.0.0.1:45987 [AZAHAR_RPC_SCRATCH=0x...] \
 ```
 `AZAHAR_RPC_SCRATCH` is the hex address of 8 writable bytes the app does
 not use; it enables the write and save/load checks.
+
+Live launch test: starts the real Azahar headless through `emu.Manager`
+(own Xvfb, test-generated minimal 3DSX), checks the one-per-host rule,
+screenshots, save/load, and that `Stop` leaves nothing running. Needs UDP
+port 45987 free:
+```sh
+MCPAZ_LIVE=1 [AZAHAR_BIN=...] go test -tags integration -run TestLiveLaunch -v ./internal/emu/
+```
+The `internal/emu` unit tests run the test binary itself as a fake Azahar
+(`MCPAZ_FAKE_AZAHAR=1`, modes in `fakeAzahar()`), so launch/stop logic is
+tested with real processes but without the emulator.
 
 Everything CI checks, runnable locally (all tools are in the dev container):
 ```sh
@@ -150,6 +162,20 @@ goreleaser check && goreleaser build --snapshot --clean
 - Screenshots come from Azahar's RPC (DECISIONS.md D4), not from X11.
 - One RPC-enabled Azahar per host with Azahar 2127 (DECISIONS.md D9):
   never start a second one or reuse a port held by something else; keep
-  the RPC endpoint in session data instead of assuming port 45987.
+  the RPC endpoint in session data instead of assuming port 45987. All
+  session-file changes and launches go through `emu.Manager`, which holds
+  the store lock (`session.Store.Lock`).
+- Azahar and Xvfb are started detached (own session/process group) and
+  stopped with SIGHUP/SIGTERM, then SIGKILL, including group members that
+  outlive the leader; liveness uses PID plus start time (`session.Alive`),
+  so reused PIDs and zombies count as dead.
+- Never trust an answering RPC server without the ownership check
+  (`Manager.verifyOwner`): unknown owner = foreign.
+- `launch` is Linux/macOS only (Azahar's portable mode uses the cwd there);
+  on Windows only `attach` is supported.
+- Session state lives in `$MCP_AZAHAR_STATE_DIR`, else
+  `$XDG_STATE_HOME/mcp-azahar`, else `~/.local/state/mcp-azahar`; each
+  launched session has `sessions/<name>.d/` with Azahar's portable `user/`
+  dir, `azahar.out` and `xvfb.out`.
 - Never file issues or comment on azahar-emu/azahar yourself, and do not
   commit drafts for upstream: hand them to the maintainer, who posts them.

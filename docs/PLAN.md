@@ -107,7 +107,8 @@ and verify nothing is missing before continuing.
 ## Phase 3 — Sessions and process manager (`internal/session`, `internal/emu`)
 Each CLI call is a separate process, so emulator lifetime must not depend
 on the caller.
-- `launch` starts Xvfb (free display, or reuse `$DISPLAY`) and Azahar
+- `launch` starts Xvfb on a free display (or uses a display given
+  explicitly, e.g. the user's desktop) and Azahar
   detached, with an isolated user dir/config per session (RPC enabled,
   single-screen layout; see `docs/PROTOCOL.md` §7 for the seed config).
   Azahar's RPC port is fixed (45987, all interfaces), so per DECISIONS.md
