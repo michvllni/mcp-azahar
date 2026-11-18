@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Publishes a GitHub release with goreleaser when a v* tag is pushed.
-# Fails before building anything unless the tag equals "v" + the `version`
-# constant in cmd/mcp-azahar/main.go.
+# Builds and uploads release assets with goreleaser when a GitHub release
+# is published (the release creates the tag). Fails before building anything
+# unless the tag equals "v" + the `version` constant in cmd/mcp-azahar/main.go
+# and the pre-release checkbox matches the version's SemVer suffix.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -21,8 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Tag matches version in main.go
-        run: scripts/check-version.sh "$GITHUB_REF_NAME"
+      - name: Tag and pre-release flag match version in main.go
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: scripts/check-version.sh -p "$PRERELEASE" "$GITHUB_REF_NAME"
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
@@ -45,8 +48,11 @@ jobs:
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          # Keep in sync with GORELEASER_VERSION in .devcontainer/Dockerfile.
+          # Keep in sync with .devcontainer/install-go-tools.sh (Renovate does).
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
           version: v2.20.2
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Keeps the title entered in the GitHub release (see .goreleaser.yaml).
+          RELEASE_NAME: ${{ github.event.release.name }}

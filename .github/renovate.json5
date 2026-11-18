@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Renovate (GitHub app) configuration. See AGENTS.md "CI and releases".
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    // Keep GitHub Actions pinned to commit SHAs (with the version as comment).
+    'helpers:pinGitHubActionDigests',
+  ],
+  // Commit messages must follow Conventional Commits (commit-msg hook).
+  semanticCommits: 'enabled',
+  labels: ['dependencies'],
+  // Give upstream a few days to pull broken or malicious releases.
+  minimumReleaseAge: '3 days',
+  postUpdateOptions: ['gomodTidy'],
+  customManagers: [
+    {
+      // Versions annotated with a comment on the line above, e.g.
+      //   # renovate: datasource=github-releases depName=golangci/golangci-lint
+      //   lint="${GOLANGCI_LINT_VERSION:-2.15.0}"   or   version: v2.15.0
+      customType: 'regex',
+      managerFilePatterns: [
+        '/(^|/)Dockerfile$/',
+        '/\\.sh$/',
+        '/^\\.github/workflows/.+\\.ya?ml$/',
+      ],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n[^\\n]*?v?(?<currentValue>\\d+\\.\\d+\\.\\d+)',
+      ],
+      extractVersionTemplate: '^v?(?<version>.*)$',
+    },
+  ],
+  packageRules: [
+    {
+      // Tool bumps are build changes (default would be chore).
+      matchManagers: ['custom.regex'],
+      matchDepNames: ['golangci/golangci-lint', 'goreleaser/goreleaser', 'rhysd/actionlint'],
+      semanticCommitType: 'build',
+    },
+  ],
+}

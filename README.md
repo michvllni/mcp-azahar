@@ -23,9 +23,9 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
 - Go 1.27 to build from source.
 
 ## Development
-The repository ships a dev container (`.devcontainer/`) with Go, Xvfb, Mesa
-software rendering, Azahar extracted to `/opt/azahar`, golangci-lint and
-goreleaser. Open the repo in it, then:
+The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)
+with Go, Xvfb, Mesa software rendering, Azahar extracted to `/opt/azahar`,
+golangci-lint, goreleaser, actionlint and shellcheck. Open the repo in it, then:
 
 ```sh
 go build ./...
@@ -36,23 +36,28 @@ go run ./cmd/mcp-azahar version
 
 CI (`.github/workflows/ci.yml`) runs tests, linters and a cross-platform
 snapshot build on every pull request; [AGENTS.md](AGENTS.md#build-test-lint)
-lists the same checks for running locally.
+lists the same checks for running locally. Dependencies, actions and tool
+versions are kept current by [Renovate](https://docs.renovatebot.com/)
+(`.github/renovate.json5`).
 
 Tool versions are pinned in `.devcontainer/Dockerfile`; the install scripts
 in `.devcontainer/` can also be run by hand (`-h` for help). Contributor and
 agent conventions: [AGENTS.md](AGENTS.md).
 
 ## Releases
-Releases are built by goreleaser for Linux, macOS and Windows (amd64 and
-arm64) when a `v*` tag is pushed. The release workflow fails unless the tag
-matches `const version` in `cmd/mcp-azahar/main.go`, so bump that first:
+Releases start in the GitHub UI: after the version bump in
+`cmd/mcp-azahar/main.go` (`const version = "X.Y.Z"`) is merged to `main`,
+create a new release with a new tag `vX.Y.Z` and publish it. The release
+workflow then builds Linux, macOS and Windows binaries (amd64 and arm64)
+with goreleaser and attaches them to that release, keeping its title and
+notes. It fails without uploading anything if
+- the tag is not exactly `v` + the version in `main.go`, or
+- the "Set as a pre-release" checkbox does not match the version
+  (`X.Y.Z-rc.1` must be a pre-release, `X.Y.Z` must not).
 
-```sh
-# after the version bump is merged to main
-git tag v0.1.0 && git push origin v0.1.0
-```
-`mcp-azahar version` (or `--version`) prints the version, commit and build
-date. No release has been published yet.
+In that case delete the release and its tag, fix the cause and publish
+again. `mcp-azahar version` (or `--version`) prints the version, commit and
+build date. No release has been published yet.
 
 ## Contributing
 Bug reports and feature requests use the issue forms; emulator bugs belong
