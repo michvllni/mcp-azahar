@@ -40,6 +40,40 @@ archives:
       - LICENSE
       - README.md
 
+# Container image (DECISIONS.md D10). Needs docker buildx, the env vars
+# AZAHAR_VERSION/AZAHAR_SHA256 (from .devcontainer/Dockerfile) and
+# .release/azahar-source/ from scripts/azahar-source.sh; the release workflow
+# provides all three. Snapshot builds tag <version>-amd64 and do not push.
+dockers_v2:
+  - id: image
+    ids: [mcp-azahar]
+    dockerfile: packaging/image/Dockerfile
+    images:
+      - ghcr.io/michvllni/mcp-azahar
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64 # Azahar ships x86_64 AppImages only
+    build_args:
+      AZAHAR_VERSION: "{{ .Env.AZAHAR_VERSION }}"
+      AZAHAR_SHA256: "{{ .Env.AZAHAR_SHA256 }}"
+    extra_files:
+      - LICENSE
+      - .devcontainer/install-azahar.sh
+      - packaging/image/NOTICE.md
+      - .release/azahar-source/azahar-LICENSE.txt
+    labels:
+      org.opencontainers.image.title: mcp-azahar
+      org.opencontainers.image.description: Unofficial MCP server and CLI for the Azahar 3DS emulator, with Azahar, Xvfb and Mesa
+      org.opencontainers.image.source: https://github.com/michvllni/mcp-azahar
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: GPL-3.0-or-later # mcp-azahar; Azahar: see NOTICE.md in the image
+      # Ownership check of the official MCP Registry for OCI packages.
+      io.modelcontextprotocol.server.name: io.github.michvllni/mcp-azahar
+      io.github.azahar.version: "{{ .Env.AZAHAR_VERSION }}"
+
 checksum:
   name_template: checksums.txt
 
@@ -53,6 +87,8 @@ changelog:
       - "^chore:"
 
 release:
+  # Azahar's source tarball (GPL, D10) is attached by release.yml before
+  # goreleaser runs, so a pushed image never lacks it.
   # The GitHub release already exists: keep its notes, keep its title
   # (RELEASE_NAME from the workflow; tag when unset, e.g. local dry runs).
   mode: keep-existing

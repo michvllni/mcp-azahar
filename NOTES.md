@@ -87,6 +87,40 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 8a (container image)
+- Image built by goreleaser `dockers_v2` (since 2.12; still marked
+  provisional, becomes `dockers` in v3) from `packaging/image/Dockerfile`:
+  `debian:trixie` (pinned digest; `-slim` lacks `libcom_err.so.2` and
+  maybe more, found in CI), Azahar extracted by
+  `install-azahar.sh` in a builder stage, Xvfb + Mesa + the Dockerfile's
+  host libraries, non-root user `azahar`, workdir `/work`, entrypoint
+  `mcp-azahar`, default command `serve`. Label
+  `io.modelcontextprotocol.server.name` for the MCP Registry (D10).
+- System libraries Azahar's bundle loads (22 sonames): the `DT_NEEDED`
+  entries of `AppRun.wrapped` and of every `.so` in `/opt/azahar` that
+  the bundle does not ship itself, mapped with `dpkg -S`. Several
+  (`libcom_err.so.2`, `libgmp`, `libICE`/`libSM`, `libwayland-client`)
+  came only as dependencies of curl/git in the CI container, so the image
+  and the CI job list them all explicitly. Recompute after an Azahar bump.
+- GPL: `scripts/azahar-source.sh` downloads Azahar's
+  `azahar-unified-source-2127.0-rc3.tar.xz` (41 MiB, digest pinned as
+  `AZAHAR_SOURCE_SHA256`), the release attaches it, and the image ships
+  Azahar's `LICENSE.txt` (GPL-3.0 text) from it. The extracted AppImage
+  contains no Azahar license file of its own.
+- buildx: the release job creates a `docker-container` builder (SBOM
+  attestations need it) and logs in to ghcr with `GITHUB_TOKEN`
+  (`packages: write`) with plain docker commands, no extra actions.
+- Review of #17: a host uid other than 1000 could not write to a
+  mounted `/work`, and `--user` left `HOME=/` (no state dir); the image
+  now sets `HOME=/tmp` and `MCP_AZAHAR_STATE_DIR=/tmp/mcp-azahar`, and CI
+  runs it with `--user "$(id -u):$(id -g)"`. Bundled Qt is 6.8.2
+  (`strings libQt6Core.so.6`); NOTICE.md names it and its source. The
+  source tarball is attached before goreleaser pushes the image (it pushes
+  images before release assets). New ghcr packages start private.
+- No container runtime in the Coder workspace: the image is only built
+  and tested in CI (job `image`: snapshot build, then the fixture is
+  launched inside the image, and `tools/list` over `docker run -i`).
+
 ### Phase 7
 - The fixture (`testdata/fixture/main.c`) builds in CI with
   `devkitpro/devkitarm:20260610` (pinned by digest); locally the artifact
