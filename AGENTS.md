@@ -166,8 +166,13 @@ goreleaser check && goreleaser build --snapshot --clean
   session-file changes and launches go through `emu.Manager`, which holds
   the store lock (`session.Store.Lock`).
 - Azahar and Xvfb are started detached (own session/process group) and
-  stopped with SIGHUP/SIGTERM, then SIGKILL; liveness uses PID plus start
-  time (`session.Alive`), so reused PIDs and zombies count as dead.
+  stopped with SIGHUP/SIGTERM, then SIGKILL, including group members that
+  outlive the leader; liveness uses PID plus start time (`session.Alive`),
+  so reused PIDs and zombies count as dead.
+- Never trust an answering RPC server without the ownership check
+  (`Manager.verifyOwner`): unknown owner = foreign.
+- `launch` is Linux/macOS only (Azahar's portable mode uses the cwd there);
+  on Windows only `attach` is supported.
 - Session state lives in `$MCP_AZAHAR_STATE_DIR`, else
   `$XDG_STATE_HOME/mcp-azahar`, else `~/.local/state/mcp-azahar`; each
   launched session has `sessions/<name>.d/` with Azahar's portable `user/`

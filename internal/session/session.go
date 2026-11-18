@@ -92,11 +92,18 @@ func (s *Session) StateFile(titleID uint64, slot int) string {
 
 var validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
+// windowsReserved are device names Windows does not allow as file names.
+var windowsReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)`)
+
 // ValidateName checks a session name: letters, digits, '.', '_', '-',
-// starting with a letter or digit, at most 64 characters.
+// starting with a letter or digit, at most 64 characters, and not a
+// Windows device name.
 func ValidateName(name string) error {
 	if !validName.MatchString(name) {
 		return fmt.Errorf("invalid session name %q: use 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit", name)
+	}
+	if windowsReserved.MatchString(name) {
+		return fmt.Errorf("invalid session name %q: reserved device name on Windows", name)
 	}
 	return nil
 }
@@ -152,6 +159,31 @@ func (st *Store) Lock(ctx context.Context) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
+	return lockFile(ctx, f)
+}
+
+// HostLock takes a lock shared by every user and state directory on this
+// host, at a fixed path in the system temp directory (DECISIONS.md D9: one
+// RPC-enabled Azahar per host). It is best effort: if the file cannot be
+// opened (e.g. created by another user without write access for others),
+// it returns a no-op release function and ok=false; the port and owner
+// checks still apply then.
+func HostLock(ctx context.Context, key string) (release func(), ok bool, err error) {
+	p := filepath.Join(os.TempDir(), "mcp-azahar-"+key+".lock")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o666)
+	if err != nil {
+		return func() {}, false, nil
+	}
+	_ = f.Chmod(0o666) // let other users share it despite the umask
+	release, err = lockFile(ctx, f)
+	if err != nil {
+		return nil, false, err
+	}
+	return release, true, nil
+}
+
+// lockFile waits for an exclusive lock on f until ctx ends; it owns f.
+func lockFile(ctx context.Context, f *os.File) (func(), error) {
 	for {
 		ok, err := tryLock(f)
 		if err != nil {
@@ -164,7 +196,7 @@ func (st *Store) Lock(ctx context.Context) (func(), error) {
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, fmt.Errorf("waiting for the session lock %s: %w", f.Name(), ctx.Err())
+			return nil, fmt.Errorf("waiting for the lock %s: %w", f.Name(), ctx.Err())
 		case <-time.After(50 * time.Millisecond):
 		}
 	}

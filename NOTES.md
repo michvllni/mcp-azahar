@@ -75,19 +75,34 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
 ### Phase 3
-- `emu.Manager.Launch`, under the host-wide store lock:
+- `emu.Manager.Launch`, under the store lock plus a best-effort lock at a
+  fixed path in the system temp dir (shared by all users and state dirs;
+  skipped if another user's file is not writable):
   - checks the session name and the RPC port (holder named: session from
     session files; on Linux the process via `/proc/net/udp` + `/proc/*/fd`);
+  - moves an existing `sessions/<name>.d` aside to `<name>.d.<timestamp>`
+    (kept save states or a crash log are never deleted);
   - seeds `sessions/<name>.d/user/config/qt-config.ini` (PROTOCOL.md §7);
   - starts Xvfb on the first free display from `:99` (Linux, unless a
-    display is given);
-  - starts Azahar detached with cwd = session dir (portable mode) and
-    `HOME` = session dir;
-  - waits for RPC, then verifies that the port belongs to the started PID
-    (or a descendant) and that the log has no `Error starting UDP server`.
+    display is given), trying the next display if Xvfb exits right away;
+  - starts Azahar detached with cwd = session dir (portable mode); `HOME`
+    is left alone (overriding it broke X auth on a user display);
+  - waits for RPC, then verifies ownership: it waits for Azahar's
+    `Starting RPC server` log line, rejects `Error starting UDP server`,
+    and on Linux requires the port's socket owner to be the started PID or
+    a descendant; a socket whose owner is unreadable (another user) or no
+    socket at all counts as foreign. On macOS only the log check applies.
+- `launch` refuses on Windows: Azahar takes its portable `user/` dir from
+  next to the executable there (`file_util.cpp:944-946`), so sessions
+  cannot get an isolated config with RPC enabled. `attach` works.
+- Process identity is PID plus start time on Linux (`/proc`), macOS
+  (sysctl) and Windows (creation time). `Stop` also SIGKILLs what is left
+  of the process group after the leader exits (wrapper scripts).
+- Unreadable session files: `launch` refuses, `stop` removes the file and
+  warns that its processes may still run.
   Failures stop everything started and include the tail of Azahar's output
   and log.
-- Live (2127.0-rc3, minimal 3DSX): launch 0.9 s; a second launch was
+- Live (2127.0-rc3, minimal 3DSX): launch 1.2 s; a second launch was
   refused; bottom screenshot 320x240 (seed config applied); save wrote
   `states/0000000000000000.01.cst`; load and stop worked, nothing left
   running.

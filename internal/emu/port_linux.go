@@ -15,8 +15,8 @@ import (
 
 // udpPortOwner finds the process holding UDP port through /proc/net/udp
 // (socket inode) and /proc/<pid>/fd (which process has that inode).
-// Processes of other users are invisible without privileges.
-func udpPortOwner(port int) (portOwner, bool) {
+// Processes of other users are invisible without privileges: ownerHidden.
+func udpPortOwner(port int) (portOwner, ownerStatus) {
 	inodes := map[string]bool{}
 	for _, f := range []string{"/proc/net/udp", "/proc/net/udp6"} {
 		for _, ino := range udpInodes(f, port) {
@@ -24,7 +24,7 @@ func udpPortOwner(port int) (portOwner, bool) {
 		}
 	}
 	if len(inodes) == 0 {
-		return portOwner{}, false
+		return portOwner{}, ownerNotBound
 	}
 	pids, _ := filepath.Glob("/proc/[0-9]*")
 	for _, dir := range pids {
@@ -43,10 +43,10 @@ func udpPortOwner(port int) (portOwner, bool) {
 			}
 			pid, _ := strconv.Atoi(filepath.Base(dir))
 			comm, _ := os.ReadFile(filepath.Join(dir, "comm"))
-			return portOwner{PID: pid, Comm: strings.TrimSpace(string(comm))}, true
+			return portOwner{PID: pid, Comm: strings.TrimSpace(string(comm))}, ownerFound
 		}
 	}
-	return portOwner{}, false
+	return portOwner{}, ownerHidden
 }
 
 // udpInodes returns the socket inodes bound to port in a /proc/net/udp file.

@@ -5,7 +5,7 @@
 package emu
 
 // udpPortOwner is only implemented on Linux.
-func udpPortOwner(int) (portOwner, bool) { return portOwner{}, false }
+func udpPortOwner(int) (portOwner, ownerStatus) { return portOwner{}, ownerUnsupported }
 
 // isSelfOrDescendant is only implemented on Linux; elsewhere ownership is
 // checked through Azahar's log alone.

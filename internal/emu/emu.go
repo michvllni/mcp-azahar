@@ -109,6 +109,12 @@ type LaunchOptions struct {
 // Launch starts Azahar for a new session and returns it once Azahar's RPC
 // server answers.
 func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (*session.Session, error) {
+	if runtime.GOOS == "windows" {
+		// Azahar takes its portable user dir from next to the executable on
+		// Windows, not from the working directory, so sessions cannot get
+		// an isolated config with RPC enabled (PROTOCOL.md §7).
+		return nil, errors.New("launch is not supported on Windows yet: start Azahar with RPC enabled yourself and use attach")
+	}
 	if err := session.ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -135,12 +141,20 @@ func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (
 		return nil, err
 	}
 	defer unlock()
+	// Also serialize with other users and state directories (D9).
+	release, _, err := session.HostLock(ctx, strconv.Itoa(m.port()))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
-	if old, err := m.Store.Load(name); err == nil {
-		if old.Running() {
-			return nil, fmt.Errorf("%w: %q (stop it first)", ErrSessionExists, name)
-		}
+	switch old, err := m.Store.Load(name); {
+	case err == nil && old.Running():
+		return nil, fmt.Errorf("%w: %q (stop it first)", ErrSessionExists, name)
+	case err == nil:
 		_ = m.cleanup(old, false)
+	case !errors.Is(err, session.ErrNotFound):
+		return nil, fmt.Errorf("existing session %q is unreadable (%w); run stop to remove it", name, err)
 	}
 	m.pruneLocked()
 	if err := m.checkPort(); err != nil {
@@ -148,7 +162,7 @@ func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (
 	}
 
 	dir := m.Store.SessionDir(name)
-	if err := os.RemoveAll(dir); err != nil {
+	if err := moveAside(dir); err != nil {
 		return nil, err
 	}
 	s := &session.Session{
@@ -162,16 +176,15 @@ func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (
 		ELFPath:    elf,
 	}
 	s.LogPath = filepath.Join(s.UserDir(), "log", "azahar_log.txt")
-	if err := writeSeedConfig(s.UserDir()); err != nil {
-		return nil, fmt.Errorf("write Azahar config: %w", err)
-	}
-
 	ok := false
 	defer func() {
 		if !ok {
 			_ = m.cleanup(s, true)
 		}
 	}()
+	if err := writeSeedConfig(s.UserDir()); err != nil {
+		return nil, fmt.Errorf("write Azahar config: %w", err)
+	}
 
 	s.Display = opts.Display
 	if s.Display == "" && runtime.GOOS == "linux" {
@@ -194,7 +207,7 @@ func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (
 	if err := m.waitRPC(ctx, s, exited); err != nil {
 		return nil, err
 	}
-	if err := m.verifyOwner(s); err != nil {
+	if err := m.verifyOwner(ctx, s); err != nil {
 		return nil, err
 	}
 	if err := m.Store.Save(s); err != nil {
@@ -202,6 +215,20 @@ func (m *Manager) Launch(ctx context.Context, name string, opts LaunchOptions) (
 	}
 	ok = true
 	return s, nil
+}
+
+// moveAside renames an existing session directory (save states and logs
+// kept by Stop, or a crashed session's log) to <dir>.<timestamp>, so a new
+// launch of the same name never destroys them.
+func moveAside(dir string) error {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	dest := dir + "." + time.Now().UTC().Format("20060102-150405.000")
+	if err := os.Rename(dir, dest); err != nil {
+		return fmt.Errorf("move old session directory aside: %w", err)
+	}
+	return nil
 }
 
 func checkFile(p, what string) (string, error) {
@@ -241,7 +268,7 @@ func (m *Manager) checkPort() error {
 		}
 	}
 	if holder == "another process" {
-		if o, ok := udpPortOwner(m.port()); ok {
+		if o, st := udpPortOwner(m.port()); st == ownerFound {
 			holder = fmt.Sprintf("process %d (%s)", o.PID, o.Comm)
 		}
 	}
@@ -261,7 +288,7 @@ func (m *Manager) startAzahar(s *session.Session, bin string) (<-chan error, err
 	cmd := exec.Command(bin, s.AppPath)
 	cmd.Dir = s.Dir
 	cmd.Stdout, cmd.Stderr = out, out
-	cmd.Env = append(os.Environ(), "HOME="+s.Dir)
+	cmd.Env = os.Environ()
 	if s.Display != "" {
 		cmd.Env = append(cmd.Env, "DISPLAY="+s.Display, "QT_QPA_PLATFORM=xcb")
 	}
@@ -285,23 +312,32 @@ func (m *Manager) waitRPC(ctx context.Context, s *session.Session, exited <-chan
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	ctx, cancel := context.WithTimeout(ctx, m.startTimeout())
+	wait, cancel := context.WithTimeout(ctx, m.startTimeout())
 	defer cancel()
+	exitErr := func(err error) error {
+		if err == nil {
+			return fmt.Errorf("%w: azahar exited with status 0%s", ErrStartFailed, tails(s))
+		}
+		return fmt.Errorf("%w: azahar exited (%w)%s", ErrStartFailed, err, tails(s))
+	}
 	for {
 		select {
 		case err := <-exited:
-			return fmt.Errorf("%w: azahar exited (%w)%s", ErrStartFailed, err, tails(s))
+			return exitErr(err)
 		default:
 		}
-		if ps, err := c.Processes(ctx); err == nil && len(ps) > 0 {
+		if ps, err := c.Processes(wait); err == nil && len(ps) > 0 {
 			return nil
 		}
 		select {
-		case <-ctx.Done():
+		case <-wait.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return fmt.Errorf("%w: RPC did not answer within %v (app failed to load, or a dialog blocks it)%s",
 				ErrStartFailed, m.startTimeout(), tails(s))
 		case err := <-exited:
-			return fmt.Errorf("%w: azahar exited (%w)%s", ErrStartFailed, err, tails(s))
+			return exitErr(err)
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
@@ -309,16 +345,50 @@ func (m *Manager) waitRPC(ctx context.Context, s *session.Session, exited <-chan
 
 // verifyOwner checks that the answering RPC server is the Azahar we
 // started: Azahar logs a bind failure and keeps running without RPC, so
-// another instance could be answering (DECISIONS.md D9).
-func (m *Manager) verifyOwner(s *session.Session) error {
+// another instance could be answering (DECISIONS.md D9). On Linux the
+// socket owner must be the started process or a descendant; a socket whose
+// owner cannot be read (another user's process) counts as foreign.
+// Elsewhere only Azahar's log can tell, so its RPC start line must appear.
+func (m *Manager) verifyOwner(ctx context.Context, s *session.Session) error {
+	started := waitForLog(ctx, s.LogPath, "Starting RPC server", 3*time.Second)
+	if started {
+		// The bind happens right after that line is logged.
+		time.Sleep(300 * time.Millisecond)
+	}
 	if b, err := os.ReadFile(s.LogPath); err == nil && bytes.Contains(b, []byte("Error starting UDP server")) {
 		return fmt.Errorf("%w: Azahar could not bind UDP port %d", ErrNotOwner, m.port())
 	}
-	if o, ok := udpPortOwner(m.port()); ok && !isSelfOrDescendant(o.PID, s.Azahar.PID) {
-		return fmt.Errorf("%w: UDP port %d is held by process %d (%s), not by the started Azahar (%d)",
-			ErrNotOwner, m.port(), o.PID, o.Comm, s.Azahar.PID)
+	o, st := udpPortOwner(m.port())
+	switch st {
+	case ownerFound:
+		if !isSelfOrDescendant(o.PID, s.Azahar.PID) {
+			return fmt.Errorf("%w: UDP port %d is held by process %d (%s), not by the started Azahar (%d)",
+				ErrNotOwner, m.port(), o.PID, o.Comm, s.Azahar.PID)
+		}
+	case ownerHidden:
+		return fmt.Errorf("%w: UDP port %d is held by a process this user cannot inspect", ErrNotOwner, m.port())
+	case ownerNotBound:
+		return fmt.Errorf("%w: nothing is bound to UDP port %d although RPC answered", ErrNotOwner, m.port())
+	case ownerUnsupported:
+		if !started {
+			return fmt.Errorf("%w: cannot verify: Azahar's log %s shows no RPC start", ErrNotOwner, s.LogPath)
+		}
 	}
 	return nil
+}
+
+// waitForLog polls a log file for text until timeout or ctx ends.
+func waitForLog(ctx context.Context, path, text string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if b, err := os.ReadFile(path); err == nil && bytes.Contains(b, []byte(text)) {
+			return true
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // tails returns the end of Azahar's output and log for error messages.
@@ -339,7 +409,11 @@ func tailFile(path string, n int) string {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
-	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	const window = 1 << 20
+	if fi, err := f.Stat(); err == nil && fi.Size() > window {
+		_, _ = f.Seek(fi.Size()-window, io.SeekStart)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, window))
 	if err != nil {
 		return ""
 	}
@@ -443,8 +517,15 @@ func (m *Manager) Stop(ctx context.Context, name string, keepFiles bool) error {
 	}
 	defer unlock()
 	s, err := m.Store.Load(name)
-	if err != nil {
+	if errors.Is(err, session.ErrNotFound) {
 		return err
+	}
+	if err != nil {
+		// Unreadable: its processes are unknown, but the file must go.
+		if derr := m.Store.Delete(name); derr != nil {
+			return errors.Join(err, derr)
+		}
+		return fmt.Errorf("removed unreadable session %q; any Azahar it started may still run: %w", name, err)
 	}
 	return m.cleanup(s, !keepFiles)
 }
@@ -475,10 +556,13 @@ func terminate(p session.Proc, sig syscall.Signal, grace time.Duration) error {
 	}
 	_ = session.Signal(p, sig)
 	if waitDead(p, grace) {
+		// Children (e.g. of a wrapper script without exec) may outlive it.
+		session.KillGroupRest(p)
 		return nil
 	}
 	_ = session.Signal(p, syscall.SIGKILL)
 	if waitDead(p, 2*time.Second) {
+		session.KillGroupRest(p)
 		return nil
 	}
 	return fmt.Errorf("process %d did not exit", p.PID)

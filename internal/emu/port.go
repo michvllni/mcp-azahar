@@ -25,3 +25,13 @@ type portOwner struct {
 	PID  int
 	Comm string
 }
+
+// ownerStatus is the result of looking up a port's owner.
+type ownerStatus int
+
+const (
+	ownerFound       ownerStatus = iota // owner known
+	ownerHidden                         // port bound, owner not readable (other user)
+	ownerNotBound                       // nothing bound to the port
+	ownerUnsupported                    // cannot be determined on this OS
+)

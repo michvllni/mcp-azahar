@@ -314,6 +314,11 @@ There is no option for the user directory or the RPC port.
    If old Citra/Lime3DS directories exist there, a **modal migration prompt**
    appears (`src/citra_qt/user_data_migration.cpp:27-52`).
 
+This is the Linux/macOS branch. **On Windows, `user/` is looked up next to
+the executable**, not in the working directory, else `%APPDATA%\Azahar`
+(`file_util.cpp:944-950`), so per-session directories need a copy of the
+emulator there.
+
 Portable mode with a fresh per-session directory isolates sessions and
 avoids the migration prompt (*observed*).
 

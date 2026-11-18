@@ -6,18 +6,15 @@ package session
 
 import (
 	"errors"
-	"os"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
 // ProcFor returns a Proc for pid, including its start time where the OS
-// provides one.
+// provides one (Linux, macOS).
 func ProcFor(pid int) Proc {
-	start, _ := procStart(pid)
+	_, start, _ := procInfo(pid)
 	return Proc{PID: pid, Start: start}
 }
 
@@ -30,48 +27,33 @@ func Alive(p Proc) bool {
 	if err := unix.Kill(p.PID, 0); err != nil && !errors.Is(err, unix.EPERM) {
 		return false
 	}
-	state, start, ok := procStat(p.PID)
+	zombie, start, ok := procInfo(p.PID)
 	if !ok {
-		return true // no /proc: kill(0) is all we have
+		return true // no process information: kill(0) is all we have
 	}
-	if state == "Z" || state == "X" {
+	if zombie {
 		return false
 	}
 	return p.Start == 0 || start == p.Start
 }
 
-// Signal sends sig to p's process group if p leads one, else to p.
+// Signal sends sig to p's process group if p leads one, else to p. It
+// does nothing if p is no longer the same process.
 func Signal(p Proc, sig syscall.Signal) error {
+	if !Alive(p) {
+		return nil
+	}
 	if pgid, err := unix.Getpgid(p.PID); err == nil && pgid == p.PID {
 		return unix.Kill(-p.PID, sig)
 	}
 	return unix.Kill(p.PID, sig)
 }
 
-func procStart(pid int) (uint64, bool) {
-	_, start, ok := procStat(pid)
-	return start, ok
-}
-
-// procStat reads state and start time (field 22) from /proc/<pid>/stat.
-func procStat(pid int) (state string, start uint64, ok bool) {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	if err != nil {
-		return "", 0, false
+// KillGroupRest sends SIGKILL to what is left of the process group led by
+// the (now dead) process p, e.g. children of a wrapper script. Call it
+// right after p has exited, so its PID cannot have been reused yet.
+func KillGroupRest(p Proc) {
+	if p.PID > 0 && unix.Kill(-p.PID, 0) == nil {
+		_ = unix.Kill(-p.PID, unix.SIGKILL)
 	}
-	// The command name (field 2) is in parentheses and may contain spaces.
-	s := string(b)
-	i := strings.LastIndexByte(s, ')')
-	if i < 0 {
-		return "", 0, false
-	}
-	f := strings.Fields(s[i+1:])
-	if len(f) < 20 {
-		return "", 0, false
-	}
-	start, err = strconv.ParseUint(f[19], 10, 64)
-	if err != nil {
-		return "", 0, false
-	}
-	return f[0], start, true
 }

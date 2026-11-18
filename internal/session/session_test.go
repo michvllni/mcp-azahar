@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -74,7 +75,7 @@ func TestValidateName(t *testing.T) {
 			t.Errorf("%q rejected: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", ".hidden", "-x", "a/b", "../x", "a b", string(make([]byte, 65))} {
+	for _, bad := range []string{"", ".hidden", "-x", "a/b", "../x", "a b", string(make([]byte, 65)), "NUL", "con.x", "Com1"} {
 		if ValidateName(bad) == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -171,4 +172,24 @@ func TestRunning(t *testing.T) {
 	if !(&Session{Kind: KindLaunched, Azahar: &Proc{PID: os.Getpid()}}).Running() {
 		t.Fatal("launched session with a live process counts as stopped")
 	}
+}
+
+func TestHostLock(t *testing.T) {
+	key := "test-" + strconv.Itoa(os.Getpid())
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(os.TempDir(), "mcp-azahar-"+key+".lock")) })
+	release, ok, err := HostLock(context.Background(), key)
+	if err != nil || !ok {
+		t.Fatalf("HostLock = %v, %v", ok, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if _, _, err := HostLock(ctx, key); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second HostLock: %v, want a timeout", err)
+	}
+	release()
+	release2, _, err := HostLock(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release2()
 }

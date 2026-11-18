@@ -39,11 +39,31 @@ func TestMain(m *testing.M) {
 
 func fakeAzahar() {
 	mode := os.Getenv("MCPAZ_FAKE_MODE")
+	switch mode {
+	case "spawner":
+		fakeSpawner()
+		return
+	case "server-only":
+		fakeServerOnly()
+		return
+	}
+	if pf := os.Getenv("MCPAZ_FAKE_PIDFILE"); pf != "" {
+		_ = os.WriteFile(pf, []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
 	fmt.Println("fake azahar output", os.Args[1:])
 	_ = os.MkdirAll(filepath.Join("user", "log"), 0o700)
 	logLine := "fake azahar started\n"
-	if mode == "bind-fail" {
+	if mode != "no-rpc" && mode != "exit" {
+		logLine += "RPC_Server <Info> core/rpc/rpc_server.cpp:RPCServer:34: Starting RPC server (synchronous).\n"
+	}
+	if mode == "bind-fail" || mode == "foreign-binderr" {
 		logLine += "RPC_Server <Error> core/rpc/server.cpp: Error starting UDP server\n"
+	}
+	if mode == "foreign" || mode == "foreign-binderr" {
+		//nolint:noctx // test helper process
+		spawner := exec.Command(os.Args[0])
+		spawner.Env = append(os.Environ(), "MCPAZ_FAKE_MODE=spawner")
+		_ = spawner.Run()
 	}
 	_ = os.WriteFile(filepath.Join("user", "log", "azahar_log.txt"), []byte(logLine), 0o600)
 	if _, err := os.Stat(filepath.Join("user", "config", "qt-config.ini")); err != nil {
@@ -53,7 +73,7 @@ func fakeAzahar() {
 	if mode == "exit" {
 		os.Exit(3)
 	}
-	if mode != "no-rpc" && mode != "bind-fail" {
+	if mode == "" || mode == "ignore-hup" {
 		srv, err := fakeserver.New(fakeserver.Config{Addr: os.Getenv("MCPAZ_FAKE_ADDR")})
 		if err != nil {
 			fmt.Println("bind:", err)
@@ -75,6 +95,29 @@ func fakeAzahar() {
 func listenUDP(t *testing.T, addr string) (net.PacketConn, error) {
 	var lc net.ListenConfig
 	return lc.ListenPacket(t.Context(), "udp4", addr)
+}
+
+// fakeSpawner starts a foreign RPC server that is not a descendant of the
+// fake Azahar (new session, parent exits), then exits.
+func fakeSpawner() {
+	//nolint:noctx // detached test helper process
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "MCPAZ_FAKE_MODE=server-only")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		os.Exit(6)
+	}
+	_ = os.WriteFile(os.Getenv("MCPAZ_FOREIGN_PIDFILE"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+}
+
+// fakeServerOnly serves RPC until killed.
+func fakeServerOnly() {
+	srv, err := fakeserver.New(fakeserver.Config{Addr: os.Getenv("MCPAZ_FAKE_ADDR")})
+	if err != nil {
+		os.Exit(5)
+	}
+	defer func() { _ = srv.Close() }()
+	select {}
 }
 
 func freeUDPPort(t *testing.T) int {
@@ -299,10 +342,11 @@ func TestStartFailures(t *testing.T) {
 func TestVerifyOwner(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "azahar_log.txt")
-	_ = os.WriteFile(logPath, []byte("x RPC_Server <Error> Error starting UDP server\n"), 0o600)
+	_ = os.WriteFile(logPath, []byte("Starting RPC server (synchronous).\nx RPC_Server <Error> Error starting UDP server\n"), 0o600)
 	m := &Manager{RPCPort: freeUDPPort(t)}
 	s := &session.Session{LogPath: logPath, Azahar: &session.Proc{PID: os.Getpid()}}
-	if err := m.verifyOwner(s); !errors.Is(err, ErrNotOwner) {
+	ctx := context.Background()
+	if err := m.verifyOwner(ctx, s); !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("bind failure in log: %v", err)
 	}
 	if runtime.GOOS != "linux" {
@@ -319,13 +363,19 @@ func TestVerifyOwner(t *testing.T) {
 		t.Skip(err)
 	}
 	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
-	s = &session.Session{LogPath: filepath.Join(dir, "missing.txt"), Azahar: &session.Proc{PID: other.Process.Pid}}
-	if err := m.verifyOwner(s); !errors.Is(err, ErrNotOwner) {
+	okLog := filepath.Join(dir, "ok.txt")
+	_ = os.WriteFile(okLog, []byte("Starting RPC server (synchronous).\n"), 0o600)
+	s = &session.Session{LogPath: okLog, Azahar: &session.Proc{PID: other.Process.Pid}}
+	if err := m.verifyOwner(ctx, s); !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("foreign owner: %v", err)
 	}
 	s.Azahar.PID = os.Getpid()
-	if err := m.verifyOwner(s); err != nil {
+	if err := m.verifyOwner(ctx, s); err != nil {
 		t.Fatalf("own port: %v", err)
+	}
+	_ = c.Close()
+	if err := m.verifyOwner(ctx, s); !errors.Is(err, ErrNotOwner) {
+		t.Fatalf("nothing bound: %v", err)
 	}
 }
 
@@ -438,7 +488,7 @@ func TestStartXvfb(t *testing.T) {
 	if !displayInUse(n) {
 		t.Fatalf("display %s has no socket", display)
 	}
-	if next, err := freeDisplay(); err != nil || next == n {
+	if next, err := freeDisplay(firstDisplay); err != nil || next == n {
 		t.Fatalf("freeDisplay returned the busy display %d (%v)", next, err)
 	}
 }
@@ -459,4 +509,133 @@ func TestHasState(t *testing.T) {
 	if _, known := HasState(&session.Session{Kind: session.KindAttached}, 1); known {
 		t.Fatal("attached session claims to know its states")
 	}
+}
+
+func TestForeignRPCServerIsRejected(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("socket owners are only visible on Linux")
+	}
+	for _, mode := range []string{"foreign", "foreign-binderr"} {
+		t.Run(mode, func(t *testing.T) {
+			m := newManager(t, mode)
+			pidFile := filepath.Join(t.TempDir(), "foreign.pid")
+			t.Setenv("MCPAZ_FOREIGN_PIDFILE", pidFile)
+			t.Cleanup(func() {
+				if b, err := os.ReadFile(pidFile); err == nil {
+					pid, _ := strconv.Atoi(string(b))
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
+			_, err := m.Launch(context.Background(), "a", launchOpts(t))
+			if !errors.Is(err, ErrNotOwner) {
+				t.Fatalf("err = %v, want ErrNotOwner", err)
+			}
+			if list, _ := m.Store.List(); len(list) != 0 {
+				t.Fatalf("session saved for a foreign server: %v", list)
+			}
+		})
+	}
+}
+
+func TestWrapperChildrenAreKilled(t *testing.T) {
+	m := newManager(t, "ignore-hup")
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "azahar-wrapper.sh")
+	// No exec: the shell stays the group leader, the "emulator" is its child.
+	script := "#!/bin/sh\n\"" + os.Args[0] + "\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.AzaharBin = wrapper
+	pidFile := filepath.Join(dir, "child.pid")
+	t.Setenv("MCPAZ_FAKE_PIDFILE", pidFile)
+	if _, err := m.Launch(context.Background(), "a", launchOpts(t)); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := strconv.Atoi(string(b))
+	childProc := session.ProcFor(child)
+	if err := m.Stop(context.Background(), "a", false); err != nil {
+		t.Fatal(err)
+	}
+	if !waitDead(childProc, 3*time.Second) {
+		t.Fatal("child of the wrapper survived Stop")
+	}
+}
+
+func TestRelaunchKeepsOldFiles(t *testing.T) {
+	m := newManager(t, "")
+	ctx := context.Background()
+	s, err := m.Launch(ctx, "a", launchOpts(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(s.UserDir(), "states", "0000000000000000.01.cst")
+	_ = os.MkdirAll(filepath.Dir(marker), 0o700)
+	_ = os.WriteFile(marker, []byte("state"), 0o600)
+	if err := m.Stop(ctx, "a", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Launch(ctx, "a", launchOpts(t)); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := filepath.Glob(s.Dir + ".*")
+	if len(old) != 1 {
+		t.Fatalf("old session dir not moved aside: %v", old)
+	}
+	if _, err := os.Stat(filepath.Join(old[0], "user", "states", "0000000000000000.01.cst")); err != nil {
+		t.Fatalf("kept save state lost: %v", err)
+	}
+}
+
+func TestCorruptSessionFile(t *testing.T) {
+	m := newManager(t, "")
+	ctx := context.Background()
+	f := filepath.Join(m.Store.Dir(), "sessions", "a.json")
+	if err := os.WriteFile(f, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Launch(ctx, "a", launchOpts(t)); err == nil || !strings.Contains(err.Error(), "unreadable") {
+		t.Fatalf("launch over a corrupt session file: %v", err)
+	}
+	if err := m.Stop(ctx, "a", false); err == nil || !strings.Contains(err.Error(), "removed unreadable") {
+		t.Fatalf("stop: %v", err)
+	}
+	if _, err := os.Stat(f); !os.IsNotExist(err) {
+		t.Fatal("corrupt session file not removed")
+	}
+}
+
+func TestXvfbStoppedAfterFailedLaunch(t *testing.T) {
+	if _, err := exec.LookPath("Xvfb"); err != nil || runtime.GOOS != "linux" {
+		t.Skip("Xvfb not available")
+	}
+	m := newManager(t, "exit")
+	before := countProcs("Xvfb")
+	if _, err := m.Launch(context.Background(), "a", LaunchOptions{App: appFile(t)}); !errors.Is(err, ErrStartFailed) {
+		t.Fatalf("err = %v", err)
+	}
+	if after := countProcs("Xvfb"); after != before {
+		t.Fatalf("Xvfb processes: %d before, %d after a failed launch", before, after)
+	}
+}
+
+// countProcs counts running processes with the given command name (Linux).
+func countProcs(comm string) int {
+	dirs, _ := filepath.Glob("/proc/[0-9]*")
+	n := 0
+	for _, d := range dirs {
+		b, err := os.ReadFile(filepath.Join(d, "comm"))
+		if err != nil || strings.TrimSpace(string(b)) != comm {
+			continue
+		}
+		pid, _ := strconv.Atoi(filepath.Base(d))
+		if session.Alive(session.ProcFor(pid)) {
+			n++
+		}
+	}
+	return n
 }
