@@ -83,7 +83,15 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   it short). "Connection refused" (ICMP) counts as a lost attempt.
 - Screenshot and LoadState take a client-wide operation lock, so two
   goroutines cannot interleave TakeScreenshot/ReadScreenshot and tear an
-  image. Other clients of the same Azahar are not coordinated (D9).
+  image. A selection read-write lock makes memory requests and
+  SelectProcess wait while LoadState runs (otherwise a concurrent select
+  fools the reload detection, and writes hit the marker selection and are
+  silently dropped). Other clients of the same Azahar are not coordinated
+  (D9).
+- A refused attempt waits out its full attempt time, so retries cover a
+  restart window like timeouts do; a refused error on Read keeps reading
+  (it may be a stale ICMP report from an earlier datagram). On Windows Go
+  suppresses these errors for UDP, so only timeouts apply there.
 - `WriteMemoryVerified` reads back, because Azahar never reports refused
   writes. Live-confirmed for `0x1FF80000`.
 - `LoadState` selects a marker PID (`0xFFFFFFFE`) before loading and waits
@@ -94,7 +102,8 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - Live, empty save slot: Azahar accepts the load, then stops emulation
   behind a modal "Save/load Error" dialog; until it is dismissed, **RPC
   answers nothing** (sync mode). The client returns `ErrStateNotLoaded`
-  after `ReloadTimeout`. Phase 3 must check the state file exists before
+  after `ReloadTimeout` plus one short restore attempt (live: 5.5 s with a
+  5 s timeout); the marker selection may remain until SelectProcess. Phase 3 must check the state file exists before
   loading, and may need to detect such dialogs (window title via X) to
   report a stuck session.
 - The live test passed against the 2127.0-rc3 AppImage with the Phase 1

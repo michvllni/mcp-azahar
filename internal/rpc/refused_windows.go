@@ -16,6 +16,9 @@ const (
 )
 
 // isRefused reports an ICMP port-unreachable on a connected UDP socket.
+// Go disables SIO_UDP_CONNRESET on Windows UDP sockets, so these errors
+// normally do not surface there: a closed port looks like a lost reply and
+// is handled by the per-attempt timeout instead.
 func isRefused(err error) bool {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {

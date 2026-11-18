@@ -377,6 +377,74 @@ func TestLoadStateEmptySlot(t *testing.T) {
 	}
 }
 
+func TestLoadStateEmptySlotSilentServer(t *testing.T) {
+	// Real Azahar answers nothing after a failed load (modal dialog).
+	srv, c := setup(t, fakeserver.Config{SilentAfterFailedLoad: true}, rpc.Options{
+		Timeout: 100 * time.Millisecond, ReloadTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond,
+	})
+	ctx := context.Background()
+	if err := c.SelectProcess(ctx, 11); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := c.LoadState(ctx, 5); !errors.Is(err, rpc.ErrStateNotLoaded) {
+		t.Fatalf("err = %v, want ErrStateNotLoaded", err)
+	}
+	// ReloadTimeout plus one short restore attempt, no retries.
+	if d := time.Since(start); d > 300*time.Millisecond+400*time.Millisecond {
+		t.Fatalf("took %v", d)
+	}
+	srv.Unblock()
+	// The restore could not reach the server: the marker is still selected,
+	// so memory requests fail until SelectProcess is called again.
+	if _, err := c.ReadMemory(ctx, 0x00100000, 4); !errors.Is(err, rpc.ErrRejected) {
+		t.Fatalf("read with marker selected: %v", err)
+	}
+	if err := c.SelectProcess(ctx, 11); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReadMemory(ctx, 0x00100000, 4); err != nil {
+		t.Fatalf("after SelectProcess: %v", err)
+	}
+}
+
+func TestSelectAndWriteWaitForLoadState(t *testing.T) {
+	procs := []rpc.Process{{PID: 11, Name: "app"}, {PID: 12, Name: "other"}}
+	srv, c := setup(t, fakeserver.Config{Processes: procs, RestartGap: 150 * time.Millisecond},
+		rpc.Options{PollInterval: 10 * time.Millisecond})
+	ctx := context.Background()
+	if err := c.SelectProcess(ctx, 11); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SaveState(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	loaded := make(chan error, 1)
+	go func() { loaded <- c.LoadState(ctx, 1) }()
+	// Wait until LoadState has selected its marker, i.e. holds the lock.
+	for srv.Selected() != 0xFFFFFFFE {
+		time.Sleep(time.Millisecond)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var selErr, writeErr error
+	go func() { defer wg.Done(); selErr = c.SelectProcess(ctx, 12) }()
+	go func() { defer wg.Done(); writeErr = c.WriteMemory(ctx, 0x00101000, []byte("W")) }()
+	if err := <-loaded; err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	wg.Wait()
+	if selErr != nil || writeErr != nil {
+		t.Fatalf("select %v, write %v", selErr, writeErr)
+	}
+	if srv.Selected() != 12 {
+		t.Fatalf("selection = %d, want 12 (set after the load, not overwritten)", srv.Selected())
+	}
+	if got := srv.Memory(0x00101000, 1); string(got) != "W" {
+		t.Fatalf("write during load was lost: %q", got)
+	}
+}
+
 func TestLoadStateNoRestart(t *testing.T) {
 	srv, c := setup(t, fakeserver.Config{NoRestartOnLoad: true}, rpc.Options{
 		Timeout: 20 * time.Millisecond, ReloadTimeout: 150 * time.Millisecond, PollInterval: 10 * time.Millisecond,

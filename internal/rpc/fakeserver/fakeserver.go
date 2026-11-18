@@ -50,7 +50,11 @@ type Config struct {
 	// requests are refused (default 50 ms). Azahar does the same when it
 	// recreates its RPC server (PROTOCOL.md §1).
 	RestartDelay, RestartGap time.Duration
-	Screens                  ScreenSource
+	// SilentAfterFailedLoad makes the server ignore every request after a
+	// LoadState from an empty slot, until Unblock: Azahar stops emulation
+	// behind a modal error dialog then (PROTOCOL.md §5.7).
+	SilentAfterFailedLoad bool
+	Screens               ScreenSource
 }
 
 // Server is a fake RPC server listening on 127.0.0.1 (random port).
@@ -76,6 +80,7 @@ type Server struct {
 	shotData   []byte
 	states     map[uint32]map[uint32][]byte
 	restarts   int
+	blocked    bool
 }
 
 // New starts a fake server.
@@ -126,6 +131,14 @@ func SolidScreens(secondary bool, scale int) (int, int, []byte) {
 // Addr returns the "host:port" the server listens on (stable across
 // restarts).
 func (s *Server) Addr() string { return s.addr }
+
+// Unblock ends the silence after a failed LoadState (the error dialog was
+// dismissed).
+func (s *Server) Unblock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blocked = false
+}
 
 // Restarts returns how often the server was recreated by LoadState.
 func (s *Server) Restarts() int {
@@ -298,8 +311,10 @@ func (s *Server) handle(conn net.PacketConn, pkt []byte, addr net.Addr) {
 	}
 	s.mu.Lock()
 	s.requests = append(s.requests, h)
-	if s.dropNext > 0 {
-		s.dropNext--
+	if s.dropNext > 0 || s.blocked {
+		if s.dropNext > 0 {
+			s.dropNext--
+		}
 		s.mu.Unlock()
 		return
 	}
@@ -414,6 +429,8 @@ func (s *Server) dispatch(h rpc.Header, data []byte, addr net.Addr) (reply []byt
 			case found:
 				s.wg.Add(1)
 				go s.restart(cloneMem(st))
+			case s.cfg.SilentAfterFailedLoad:
+				s.blocked = true // takes effect after this reply
 			}
 		}
 		var v uint32

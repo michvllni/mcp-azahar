@@ -44,7 +44,8 @@ not from older Citra clients, and checked against a running Azahar.
   (AzaharRPC.py and `internal/rpc` do 2× for both).
 - While Azahar recreates the server (LoadState), the port is closed: a
   connected UDP client gets "connection refused" (ICMP) instead of silence
-  and must treat it like a lost reply.
+  and must treat it like a lost reply. On Windows, Go suppresses these
+  errors for UDP, so the client only sees silence.
 
 ## 3. Packet format
 

@@ -104,11 +104,13 @@ func (o Options) withDefaults() Options {
 // Client talks to one Azahar RPC server. It is safe for concurrent use;
 // requests are sent one at a time, as Azahar processes them in order anyway.
 // Screenshot and LoadState span several requests and exclude each other,
-// so concurrent screenshots cannot replace each other's image data. Other
-// clients of the same Azahar are not coordinated (DECISIONS.md D9).
+// so concurrent screenshots cannot replace each other's image data; memory
+// requests and SelectProcess wait while a LoadState runs. Other clients of
+// the same Azahar are not coordinated (DECISIONS.md D9).
 type Client struct {
-	opMu     sync.Mutex // multi-request operations
-	mu       sync.Mutex // one request at a time
+	opMu     sync.Mutex   // multi-request operations (Screenshot, LoadState)
+	selMu    sync.RWMutex // process selection: LoadState and SelectProcess write, memory requests read
+	mu       sync.Mutex   // one request at a time
 	conn     net.Conn
 	opts     Options
 	nextID   uint32
@@ -192,63 +194,52 @@ func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout tim
 
 	refused := false
 	for attempt := 0; attempt < attempts; attempt++ {
-		if attempt > 0 && refused {
-			// Give a restarting server a moment instead of burning retries.
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(min(timeout/4, 100*time.Millisecond)):
-			}
+		refused = false
+		attemptEnd := time.Now().Add(timeout)
+		ctxDeadline, hasCtxDeadline := ctx.Deadline()
+		limitedByCtx := hasCtxDeadline && !ctxDeadline.After(attemptEnd)
+		if limitedByCtx {
+			attemptEnd = ctxDeadline
 		}
-		if _, err := c.conn.Write(pkt); err != nil {
+		if err := c.write(pkt); err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			if isRefused(err) {
-				refused = true
-				continue
+			if !isRefused(err) {
+				return nil, fmt.Errorf("rpc: send %v: %w", t, err)
 			}
-			return nil, fmt.Errorf("rpc: send %v: %w", t, err)
-		}
-		deadline := time.Now().Add(timeout)
-		ctxDeadline, hasCtxDeadline := ctx.Deadline()
-		limitedByCtx := hasCtxDeadline && !ctxDeadline.After(deadline)
-		if limitedByCtx {
-			deadline = ctxDeadline
-		}
-		if err := c.conn.SetReadDeadline(deadline); err != nil {
-			return nil, fmt.Errorf("rpc: %w", err)
-		}
-		// A cancel that fired before this point was overwritten above.
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	read:
-		for {
-			n, err := c.conn.Read(c.buf)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				var ne net.Error
-				switch {
-				case errors.As(err, &ne) && ne.Timeout():
-					if limitedByCtx {
-						// The caller's deadline, not the attempt's, expired.
-						return nil, context.DeadlineExceeded
-					}
-					break read
-				case isRefused(err):
-					refused = true
-					break read
-				}
-				return nil, fmt.Errorf("rpc: receive %v: %w", t, err)
+			refused = true
+		} else {
+			if err := c.conn.SetReadDeadline(attemptEnd); err != nil {
+				return nil, fmt.Errorf("rpc: %w", err)
 			}
-			h, reply, err := DecodePacket(c.buf[:n])
-			if err != nil || h.Version != ProtocolVersion || h.ID != id || h.Type != t {
-				continue // malformed, or a late reply to an earlier request
+			// A cancel that fired before this point was overwritten above.
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			return bytes.Clone(reply), nil
+			reply, ok, err := c.readReply(ctx, id, t, &refused)
+			switch {
+			case err != nil:
+				return nil, err
+			case ok:
+				return reply, nil
+			case limitedByCtx:
+				// The caller's deadline, not the attempt's, expired.
+				return nil, context.DeadlineExceeded
+			}
+		}
+		if refused {
+			// Nothing listens right now, e.g. while Azahar recreates its RPC
+			// server: wait out the attempt like a lost reply, so retries
+			// cover as much time as they would for timeouts.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Until(attemptEnd)):
+			}
+			if limitedByCtx {
+				return nil, context.DeadlineExceeded
+			}
 		}
 	}
 	if refused {
@@ -256,6 +247,44 @@ func (c *Client) do(ctx context.Context, t RequestType, data []byte, timeout tim
 			"(is an app loaded with the RPC server enabled?)", ErrTimeout, t)
 	}
 	return nil, fmt.Errorf("%w: %v after %d attempt(s) of %v", ErrTimeout, t, attempts, timeout)
+}
+
+// write sends pkt. A refused error can be a stale ICMP report from an
+// earlier datagram, so it is retried once.
+func (c *Client) write(pkt []byte) error {
+	_, err := c.conn.Write(pkt)
+	if err != nil && isRefused(err) {
+		_, err = c.conn.Write(pkt)
+	}
+	return err
+}
+
+// readReply reads until the matching reply or the read deadline. ok is
+// false on timeout. A refused error sets *refused but reading goes on: it
+// may be stale, and a real reply can still arrive before the deadline.
+func (c *Client) readReply(ctx context.Context, id uint32, t RequestType, refused *bool) (reply []byte, ok bool, err error) {
+	for {
+		n, err := c.conn.Read(c.buf)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, ctx.Err()
+			}
+			var ne net.Error
+			switch {
+			case errors.As(err, &ne) && ne.Timeout():
+				return nil, false, nil
+			case isRefused(err):
+				*refused = true
+				continue
+			}
+			return nil, false, fmt.Errorf("rpc: receive %v: %w", t, err)
+		}
+		h, data, err := DecodePacket(c.buf[:n])
+		if err != nil || h.Version != ProtocolVersion || h.ID != id || h.Type != t {
+			continue // malformed, or a late reply to an earlier request
+		}
+		return bytes.Clone(data), true, nil
+	}
 }
 
 // request runs an ordinary request with the default timeout and retries.
@@ -281,6 +310,8 @@ func (c *Client) ReadMemory(ctx context.Context, addr uint32, size int) ([]byte,
 	if err := checkRange(addr, size); err != nil {
 		return nil, err
 	}
+	c.selMu.RLock()
+	defer c.selMu.RUnlock()
 	out := make([]byte, 0, size)
 	for len(out) < size {
 		n := min(size-len(out), MaxReadSize)
@@ -305,6 +336,8 @@ func (c *Client) WriteMemory(ctx context.Context, addr uint32, data []byte) erro
 	if err := checkRange(addr, len(data)); err != nil {
 		return err
 	}
+	c.selMu.RLock()
+	defer c.selMu.RUnlock()
 	for off := 0; off < len(data); {
 		n := min(len(data)-off, MaxWriteSize)
 		a := addr + uint32(off)
@@ -371,6 +404,8 @@ func (c *Client) Process(ctx context.Context) (uint32, error) {
 // The selection is server state shared by all clients, and is reset when
 // a save state is loaded; LoadState restores it (PROTOCOL.md §5.4).
 func (c *Client) SelectProcess(ctx context.Context, pid uint32) error {
+	c.selMu.Lock()
+	defer c.selMu.Unlock()
 	if err := c.setProcess(ctx, pid); err != nil {
 		return err
 	}
@@ -541,62 +576,79 @@ const loadMarker = 0xFFFFFFFE
 // LoadState loads the save state in slot 0..10 and returns once Azahar has
 // reloaded. Loading recreates Azahar's RPC server (PROTOCOL.md §1, §5.7):
 // LoadState waits for that restart, up to Options.ReloadTimeout, then
-// restores the process selection. Azahar accepts a load from an empty or
-// incompatible slot and only fails afterwards; LoadState then returns
-// ErrStateNotLoaded. Memory requests sent concurrently during a LoadState
-// fail with ErrRejected.
+// restores the process selection. Memory requests and SelectProcess on this
+// client wait until LoadState returns.
+//
+// Azahar accepts a load from an empty or incompatible slot and only fails
+// afterwards; LoadState then returns ErrStateNotLoaded. Azahar is then
+// stuck behind a modal dialog and answers no RPC, so the selection cannot
+// be restored and later memory requests fail with ErrRejected or ErrTimeout
+// until the dialog is dismissed and SelectProcess is called again. The
+// same applies if ctx ends while waiting for the reload.
 func (c *Client) LoadState(ctx context.Context, slot int) error {
 	if slot < 0 || slot >= SaveStateSlots {
 		return fmt.Errorf("rpc: save state slot %d outside 0..%d", slot, SaveStateSlots-1)
 	}
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
+	c.selMu.Lock()
+	defer c.selMu.Unlock()
 	c.mu.Lock()
 	restore := c.selected
 	c.mu.Unlock()
+
+	probe := min(c.opts.Timeout, 500*time.Millisecond)
+	// restoreSelection is best effort with one short attempt: after a failed
+	// load Azahar does not answer at all.
+	restoreSelection := func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probe)
+		defer cancel()
+		_, _ = c.do(rctx, TypeSetGetProcess, args2(1, restore), probe, 1)
+	}
 
 	if err := c.setProcess(ctx, loadMarker); err != nil {
 		return err
 	}
 	if err := c.state(ctx, TypeLoadState, slot); err != nil {
-		_ = c.setProcess(context.WithoutCancel(ctx), restore)
+		restoreSelection()
 		return err
 	}
 
-	wait, cancel := context.WithTimeout(ctx, c.opts.ReloadTimeout)
-	defer cancel()
-	probe := min(c.opts.Timeout, 500*time.Millisecond)
+	deadline := time.Now().Add(c.opts.ReloadTimeout)
 	for {
 		// One short attempt: requests are lost or refused while the server
 		// restarts.
-		reply, err := c.do(wait, TypeSetGetProcess, args2(0, 0), probe, 1)
+		pctx, cancel := context.WithDeadline(ctx, deadline)
+		reply, err := c.do(pctx, TypeSetGetProcess, args2(0, 0), probe, 1)
+		cancel()
 		switch {
 		case ctx.Err() != nil:
+			restoreSelection()
 			return ctx.Err()
 		case err == nil && len(reply) >= 4 && binary.LittleEndian.Uint32(reply) != loadMarker:
 			if restore == NoProcess {
 				return nil // the restarted server has no selection either
 			}
 			return c.setProcess(ctx, restore)
-		case err != nil && !errors.Is(err, ErrTimeout) && wait.Err() == nil:
+		case err != nil && !errors.Is(err, ErrTimeout) && !errors.Is(err, context.DeadlineExceeded):
+			restoreSelection()
 			return err
 		}
-		if wait.Err() == nil {
-			select {
-			case <-wait.Done():
-			case <-time.After(c.opts.PollInterval):
-				continue
-			}
+		if !time.Now().Before(deadline) {
+			break
 		}
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			restoreSelection()
 			return ctx.Err()
+		case <-time.After(min(c.opts.PollInterval, time.Until(deadline))):
 		}
-		_ = c.setProcess(context.WithoutCancel(ctx), restore)
-		return fmt.Errorf("%w: slot %d: Azahar accepted the request but did not reload within %v; "+
-			"the slot may be empty or from another app or Azahar build. Azahar is now stopped "+
-			"behind a modal error dialog and answers no RPC until it is dismissed (see its log)",
-			ErrStateNotLoaded, slot, c.opts.ReloadTimeout)
 	}
+	restoreSelection()
+	return fmt.Errorf("%w: slot %d: Azahar accepted the request but did not reload within %v; "+
+		"the slot may be empty or from another app or Azahar build. Azahar is now stopped "+
+		"behind a modal error dialog and answers no RPC until it is dismissed (see its log)",
+		ErrStateNotLoaded, slot, c.opts.ReloadTimeout)
 }
 
 // SetInput applies in until the next SetInput (PROTOCOL.md §5.8).
