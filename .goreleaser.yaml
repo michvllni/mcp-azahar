@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
-# Release config for goreleaser v2. The version comes from the git tag, which
-# the release workflow checks against `const version` in cmd/mcp-azahar/main.go.
+# Release config for goreleaser v2. Runs in .github/workflows/release.yml after
+# a GitHub release is published; uploads assets into that existing release.
+# The version comes from its tag, which is checked against `const version` in
+# cmd/mcp-azahar/main.go.
 version: 2
 
 project_name: mcp-azahar
@@ -51,7 +53,12 @@ changelog:
       - "^chore:"
 
 release:
-  # Tags with a SemVer pre-release suffix (v1.0.0-rc.1) become pre-releases.
+  # The GitHub release already exists: keep its notes, keep its title
+  # (RELEASE_NAME from the workflow; tag when unset, e.g. local dry runs).
+  mode: keep-existing
+  name_template: '{{ if index .Env "RELEASE_NAME" }}{{ index .Env "RELEASE_NAME" }}{{ else }}{{ .Tag }}{{ end }}'
+  # goreleaser always sets the pre-release flag; tags with a SemVer suffix
+  # (v1.0.0-rc.1) are pre-releases. The workflow checks the UI checkbox matches.
   prerelease: auto
   footer: |
     Unofficial tool, not affiliated with the Azahar project. Requires Azahar 2127.0 or newer.

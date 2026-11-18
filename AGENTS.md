@@ -22,7 +22,7 @@ internal/            all behavior; CLI and MCP call the same functions
 scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
 .github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
-.github/             issue templates, PR template, dependabot.yml
+.github/             issue templates, PR template, renovate.json5
 .goreleaser.yaml     release builds   .golangci.yml  linter config
 docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 NOTES.md             running log: status, blockers, installed-tools checklist
@@ -53,19 +53,24 @@ goreleaser check && goreleaser build --snapshot --clean
 - `.github/workflows/ci.yml` runs on every pull request and push to `main`:
   build + race tests, golangci-lint, actionlint, shellcheck, SPDX headers,
   `goreleaser check` and a snapshot build for all platforms.
-- `.github/workflows/release.yml` runs on `v*` tags. It first runs
-  `scripts/check-version.sh "$GITHUB_REF_NAME"` and **fails unless the tag
-  is exactly `v` + `const version` in `cmd/mcp-azahar/main.go`**, then tests,
-  then publishes with goreleaser (goreleaser repeats the check as a hook).
+- `.github/workflows/release.yml` runs when a **GitHub release is
+  published**. It first runs `scripts/check-version.sh -p <prerelease> <tag>`
+  and **fails unless the tag is exactly `v` + `const version` in
+  `cmd/mcp-azahar/main.go`** and the pre-release checkbox matches the
+  version (SemVer suffix like `-rc.1` ⇔ pre-release). Then it tests and runs
+  goreleaser, which uploads the archives into that release, keeping its
+  notes and title (`.goreleaser.yaml` `release:`).
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
-  then tag that commit `v<version>` and push the tag. Only the maintainer
-  tags and releases. A SemVer pre-release suffix (`-rc.1`) makes a GitHub
-  pre-release.
-- Actions are pinned to commit SHAs with the version in a comment;
-  Dependabot updates them and Go modules weekly. Tool versions in the
-  workflows (golangci-lint, goreleaser) must match the Dockerfile ARGs.
-- No integration-test job yet: it needs a working Azahar runtime and the
-  fixture (Phase 0 glibc blocker, Phase 7).
+  then create a GitHub release on `main` with a new tag `v<version>` and
+  publish it. Do not push tags by hand. Only the maintainer releases. If
+  the check fails, delete the release and its tag, fix, publish again.
+  goreleaser cannot upload into immutable releases.
+- Dependencies are updated by the **Renovate GitHub app**
+  (`.github/renovate.json5`): Go modules, GitHub Actions (pinned to commit
+  SHAs with the version in a comment), devcontainer features, and tool
+  versions annotated with `# renovate: datasource=… depName=…` on the line
+  above the version. Annotate every new pinned version the same way.
+- No integration-test job yet: it needs the fixture (Phase 7).
 
 ## Conventions
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
@@ -91,18 +96,26 @@ goreleaser check && goreleaser build --snapshot --clean
 - Every tool is installed twice: live in the running container **and**
   recorded in `.devcontainer/` (Dockerfile ARG / install script). Add it to
   the checklist in `NOTES.md`.
-- Pinned versions: Azahar `AZAHAR_VERSION`/`AZAHAR_SHA256`,
-  `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `ACTIONLINT_VERSION` in
-  `.devcontainer/Dockerfile`. Bump them there, in the script defaults and
-  in the workflows together.
+- Base image: `devcontainers/base` trixie (Azahar 2127 needs glibc >= 2.39).
+- Pinned versions: Azahar `AZAHAR_VERSION`/`AZAHAR_SHA256` as Dockerfile
+  ARGs (bump by hand, both together: the digest is on the GitHub release
+  asset). golangci-lint, goreleaser and actionlint in the defaults of
+  `.devcontainer/install-go-tools.sh` (used by the image and CI), plus the
+  `version:` inputs in the workflows; Renovate keeps them in sync.
 - `.devcontainer/install-azahar.sh` extracts the AppImage with `unsquashfs`
-  into `/opt/azahar`; start Azahar via `$AZAHAR_BIN` (`/opt/azahar/AppRun`),
-  not `usr/bin/azahar` directly (AppRun injects the bundled libstdc++).
+  into `/opt/azahar`; start Azahar via `$AZAHAR_BIN` (`/opt/azahar/AppRun`,
+  which injects the bundled libstdc++).
+- `.devcontainer/patch-azahar-bookworm.sh` is a stopgap only for a
+  container still on bookworm; afterwards start `/opt/azahar/usr/bin/azahar`
+  directly. Delete it once the container runs trixie.
 - Run Azahar headless under Xvfb (`xvfb-run -a ...`), Mesa llvmpipe.
 
 ## Pitfalls
-- Azahar 2127 AppImages need glibc >= 2.39; Debian bookworm (2.36) cannot
-  run them. See `NOTES.md` → Blockers.
+- Azahar 2127 AppImages need glibc >= 2.39 and a HarfBuzz newer than 6.0; Debian
+  bookworm cannot run them unpatched. Never fix this with a global
+  `LD_LIBRARY_PATH`: Azahar spawns `sh`, which then crashes.
+- Azahar ignores SIGTERM: stopping it needs SIGKILL after a grace period.
+- Azahar shows no first-run dialog with a fresh config dir.
 - devkitPro's servers return 403 from some cloud ranges; the test fixture
   is built in CI with the `devkitpro/devkitarm` image.
 - In the Coder workspace only `/home/vscode/volume` persists; anything
