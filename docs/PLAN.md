@@ -110,13 +110,17 @@ on the caller.
 - `launch` starts Xvfb (free display, or reuse `$DISPLAY`) and Azahar
   detached, with an isolated user dir/config per session (RPC enabled,
   single-screen layout; see `docs/PROTOCOL.md` §7 for the seed config).
-  Azahar's RPC port is fixed (45987, all interfaces): how sessions isolate
-  it and run in parallel is decided before this phase (NOTES.md "Open
-  questions"). `launch` waits until RPC answers, then writes a
-  session file: `$XDG_STATE_HOME/mcp-azahar/sessions/<name>.json`
-  (PIDs, display, RPC port, user dir, log path, app path, ELF path).
+  Azahar's RPC port is fixed (45987, all interfaces), so per DECISIONS.md
+  D9 `launch` holds a host-wide launch lock, refuses to start while that
+  port is in use (naming the session, on Linux the process from `/proc`,
+  else "another process"), and verifies that the RPC server that answers
+  belongs to the Azahar it started. It waits until RPC answers, then writes
+  a session file: `$XDG_STATE_HOME/mcp-azahar/sessions/<name>.json` (PIDs,
+  display, RPC endpoint `{"network": "udp", "address": "127.0.0.1:45987"}`,
+  user dir, log path, app path, ELF path).
 - Every other command attaches via the session file. Named sessions via
-  `--session <name>` (default `default`) allow parallel instances.
+  `--session <name>` (default `default`); with Azahar 2127 only one of them
+  can have a running Azahar at a time (D9).
 - `attach --port N [--elf path]` registers an Azahar the user started by
   hand (RPC only; screenshots work too, since they use RPC).
 - `stop` terminates processes and removes the session; detect and clean
@@ -179,7 +183,9 @@ stable; check its docs for current API). stdio transport.
   launch fixture, press A, assert via `read-symbol` that `last_buttons`
   changed; touch and assert coordinates; screenshot and check
   dimensions/non-blank; save state, mutate, load state, assert restored;
-  logs contain the fixture's output; two named sessions run in parallel.
+  logs contain the fixture's output; a second `launch` in another named
+  session fails with a clear error while the first runs (parallel
+  sessions once D9 allows them).
 - One `testdata/fixture/smoke.yaml` sequence that `mcp-azahar sequence`
   runs green — the reference example for users.
 - A short MCP smoke test: start `serve`, call tools over stdio, verify a
@@ -192,8 +198,9 @@ stable; check its docs for current API). stdio transport.
   for Claude Code (`claude mcp add ...`) and Claude Desktop (JSON), a note
   that agents can also use the CLI directly via bash, license section
   (GPL-3.0-or-later). Security note: RPC is unauthenticated and Azahar
-  binds it to all interfaces on a fixed port; explain how mcp-azahar keeps
-  it off the network and never expose it.
+  2127 binds it to all interfaces on a fixed port, so a running session is
+  reachable from the network; recommend a firewall or isolated container
+  (D9) and update the note once upstream allows binding to 127.0.0.1.
 - goreleaser for linux/amd64+arm64, darwin, windows (`launch` with Xvfb
   is Linux-first; `attach` and screenshots via RPC work everywhere;
   document it). Include LICENSE in archives.
@@ -208,4 +215,5 @@ screens, and verify state via `read_symbol`.
 
 ## Out of scope (note in NOTES.md, don't build)
 Upstream Azahar changes (e.g. a configurable RPC port and bind address) —
-draft a feature request text in `docs/upstream-proposal.md` instead.
+draft a feature request text for the maintainer instead (not committed);
+the maintainer files it.

@@ -69,10 +69,15 @@ Conventional Commit messages and must update the docs (see
 
 ## Security
 Azahar's RPC server is unauthenticated and, as of Azahar 2127, always
-listens on UDP port 45987 on **all interfaces** (not configurable). Anyone
-who can reach that port can read and write emulated memory. Never run it on
-an untrusted network; mcp-azahar is meant to keep it off the network
-(design in progress, see [NOTES.md](NOTES.md)). Report vulnerabilities
+listens on UDP port 45987 on **all interfaces** (not configurable). While
+an Azahar started by mcp-azahar runs, anyone who can reach that port can
+control the emulator: read and write memory, send input, save and load
+states, take screenshots. Block the port with a firewall or run in an
+isolated container, and never on an untrusted network. Because the port
+is fixed, only one RPC-enabled Azahar can run per host
+([DECISIONS.md D9](docs/DECISIONS.md)); a configurable port and bind
+address is requested upstream
+([azahar-emu/azahar#2829](https://github.com/azahar-emu/azahar/issues/2829)). Report vulnerabilities
 privately, see [SECURITY.md](SECURITY.md).
 
 ## License
