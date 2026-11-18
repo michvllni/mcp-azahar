@@ -34,13 +34,36 @@ golangci-lint run ./...
 go run ./cmd/mcp-azahar version
 ```
 
+CI (`.github/workflows/ci.yml`) runs tests, linters and a cross-platform
+snapshot build on every pull request; [AGENTS.md](AGENTS.md#build-test-lint)
+lists the same checks for running locally.
+
 Tool versions are pinned in `.devcontainer/Dockerfile`; the install scripts
 in `.devcontainer/` can also be run by hand (`-h` for help). Contributor and
 agent conventions: [AGENTS.md](AGENTS.md).
 
+## Releases
+Releases are built by goreleaser for Linux, macOS and Windows (amd64 and
+arm64) when a `v*` tag is pushed. The release workflow fails unless the tag
+matches `const version` in `cmd/mcp-azahar/main.go`, so bump that first:
+
+```sh
+# after the version bump is merged to main
+git tag v0.1.0 && git push origin v0.1.0
+```
+`mcp-azahar version` (or `--version`) prints the version, commit and build
+date. No release has been published yet.
+
+## Contributing
+Bug reports and feature requests use the issue forms; emulator bugs belong
+to [Azahar](https://github.com/azahar-emu/azahar/issues). Pull requests use
+Conventional Commit messages and must update the docs (see
+[AGENTS.md](AGENTS.md)).
+
 ## Security
 Azahar's RPC server is unauthenticated. mcp-azahar will bind it to
-127.0.0.1 only; never expose it on a network.
+127.0.0.1 only; never expose it on a network. Report vulnerabilities
+privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 GPL-3.0-or-later. See [LICENSE](LICENSE).

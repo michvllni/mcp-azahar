@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+blank_issues_enabled: false
+contact_links:
+  - name: Azahar emulator bugs
+    url: https://github.com/azahar-emu/azahar/issues
+    about: Problems with the emulator itself (not with mcp-azahar) go to the Azahar project.
+  - name: Security vulnerabilities
+    url: https://github.com/michvllni/mcp-azahar/security/advisories/new
+    about: Report vulnerabilities privately, not as a public issue.

@@ -15,10 +15,15 @@ be committed.
 
 ## Structure
 ```
-cmd/mcp-azahar/      thin Cobra front end (CLI; later also `serve` for MCP)
+cmd/mcp-azahar/      thin Cobra front end (CLI; later also `serve` for MCP);
+                     main.go holds `const version`, the release version
 internal/            all behavior; CLI and MCP call the same functions
-  version/           build metadata, set via -ldflags
+  version/           version string formatting; Commit/Date set via -ldflags
+scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
+.github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
+.github/             issue templates, PR template, dependabot.yml
+.goreleaser.yaml     release builds   .golangci.yml  linter config
 docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
@@ -34,10 +39,40 @@ go run ./cmd/mcp-azahar version
 ```
 Integration tests (later phases) use the build tag `integration`.
 
+Everything CI checks, runnable locally (all tools are in the dev container):
+```sh
+go mod tidy -diff && go vet ./... && go test -race -count=1 ./...
+golangci-lint run ./...
+actionlint
+git ls-files -z '*.sh' | xargs -0 shellcheck
+scripts/check-spdx.sh
+goreleaser check && goreleaser build --snapshot --clean
+```
+
+## CI and releases
+- `.github/workflows/ci.yml` runs on every pull request and push to `main`:
+  build + race tests, golangci-lint, actionlint, shellcheck, SPDX headers,
+  `goreleaser check` and a snapshot build for all platforms.
+- `.github/workflows/release.yml` runs on `v*` tags. It first runs
+  `scripts/check-version.sh "$GITHUB_REF_NAME"` and **fails unless the tag
+  is exactly `v` + `const version` in `cmd/mcp-azahar/main.go`**, then tests,
+  then publishes with goreleaser (goreleaser repeats the check as a hook).
+- Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
+  then tag that commit `v<version>` and push the tag. Only the maintainer
+  tags and releases. A SemVer pre-release suffix (`-rc.1`) makes a GitHub
+  pre-release.
+- Actions are pinned to commit SHAs with the version in a comment;
+  Dependabot updates them and Go modules weekly. Tool versions in the
+  workflows (golangci-lint, goreleaser) must match the Dockerfile ARGs.
+- No integration-test job yet: it needs a working Azahar runtime and the
+  fixture (Phase 0 glibc blocker, Phase 7).
+
 ## Conventions
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
-  (or the equivalent comment syntax). Code ported from Azahar keeps its
-  copyright notice plus a comment naming the source file and commit.
+  (or the equivalent comment syntax; `*.go *.sh *.yml *.yaml *.json
+  Dockerfile` are enforced by `scripts/check-spdx.sh` in CI). Code ported
+  from Azahar keeps its copyright notice plus a comment naming the source
+  file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI
   and MCP.
 - Never guess the Azahar RPC wire format: it comes from Azahar source and is
@@ -47,6 +82,9 @@ Integration tests (later phases) use the build tag `integration`.
   `usage` function for `-h` and bad arguments, `set -euo pipefail`.
 - Commit after each phase. Do not push, tag, release or publish without
   asking the maintainer.
+- Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`,
+  `build:`, `ci:`, `chore:`, `refactor:`, `test:` …); a local commit-msg
+  hook rejects others.
 - No Azure DevOps work item references in commits (GitHub repo).
 
 ## Dev container and tools
@@ -54,8 +92,9 @@ Integration tests (later phases) use the build tag `integration`.
   recorded in `.devcontainer/` (Dockerfile ARG / install script). Add it to
   the checklist in `NOTES.md`.
 - Pinned versions: Azahar `AZAHAR_VERSION`/`AZAHAR_SHA256`,
-  `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION` in `.devcontainer/Dockerfile`.
-  Bump them there (and the script defaults) together.
+  `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `ACTIONLINT_VERSION` in
+  `.devcontainer/Dockerfile`. Bump them there, in the script defaults and
+  in the workflows together.
 - `.devcontainer/install-azahar.sh` extracts the AppImage with `unsquashfs`
   into `/opt/azahar`; start Azahar via `$AZAHAR_BIN` (`/opt/azahar/AppRun`),
   not `usr/bin/azahar` directly (AppRun injects the bundled libstdc++).

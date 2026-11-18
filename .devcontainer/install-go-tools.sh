@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# install-go-tools.sh - install pinned golangci-lint and goreleaser binaries.
+# install-go-tools.sh - install pinned golangci-lint, goreleaser and actionlint binaries.
 #
 # SYNOPSIS
-#   install-go-tools.sh [-l VERSION] [-r VERSION] [-d DIR]
+#   install-go-tools.sh [-l VERSION] [-r VERSION] [-a VERSION] [-d DIR]
 #
 # DESCRIPTION
-#   Downloads the linux/amd64 release archives of golangci-lint and goreleaser
-#   from GitHub, verifies them against the checksum files published with each
-#   release, and installs the binaries into DIR.
+#   Downloads the linux/amd64 release archives of golangci-lint, goreleaser
+#   and actionlint from GitHub, verifies them against the checksum files
+#   published with each release, and installs the binaries into DIR.
 #   Requires: curl, tar, sha256sum. Run as root or with write access to DIR.
 #
 # OPTIONS
 #   -l VERSION  golangci-lint version without "v" (default: $GOLANGCI_LINT_VERSION or 2.15.0)
 #   -r VERSION  goreleaser version without "v" (default: $GORELEASER_VERSION or 2.20.2)
+#   -a VERSION  actionlint version without "v" (default: $ACTIONLINT_VERSION or 1.7.12)
 #   -d DIR      Install directory (default: /usr/local/bin)
 #   -h          Show this help
 #
 # EXAMPLE
-#   sudo .devcontainer/install-go-tools.sh -l 2.15.0 -r 2.20.2
+#   sudo .devcontainer/install-go-tools.sh -l 2.15.0 -r 2.20.2 -a 1.7.12
 set -euo pipefail
 
 lint="${GOLANGCI_LINT_VERSION:-2.15.0}"
 rel="${GORELEASER_VERSION:-2.20.2}"
+al="${ACTIONLINT_VERSION:-1.7.12}"
 dir="/usr/local/bin"
 
 # usage: print the header help block. No arguments; writes to stdout.
@@ -31,10 +33,11 @@ usage() {
   sed -n '3,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0"
 }
 
-while getopts ":l:r:d:h" opt; do
+while getopts ":l:r:a:d:h" opt; do
   case "$opt" in
     l) lint="$OPTARG" ;;
     r) rel="$OPTARG" ;;
+    a) al="$OPTARG" ;;
     d) dir="$OPTARG" ;;
     h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -64,5 +67,13 @@ grep " goreleaser_Linux_x86_64.tar.gz\$" checksums.txt | sha256sum -c -
 mkdir goreleaser && tar xzf goreleaser_Linux_x86_64.tar.gz -C goreleaser
 install -m 0755 goreleaser/goreleaser "$dir/"
 
+base="https://github.com/rhysd/actionlint/releases/download/v${al}"
+fetch "$base/actionlint_${al}_linux_amd64.tar.gz"
+fetch "$base/actionlint_${al}_checksums.txt"
+grep " actionlint_${al}_linux_amd64.tar.gz\$" "actionlint_${al}_checksums.txt" | sha256sum -c -
+mkdir actionlint && tar xzf "actionlint_${al}_linux_amd64.tar.gz" -C actionlint
+install -m 0755 actionlint/actionlint "$dir/"
+
 "$dir/golangci-lint" version
 "$dir/goreleaser" --version | grep GitVersion
+"$dir/actionlint" -version | head -1
