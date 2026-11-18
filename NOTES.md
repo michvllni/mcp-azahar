@@ -12,8 +12,10 @@ at the top of each section.
   RPC session per host, upstream request filed).
 - Phase 2 (RPC client `internal/rpc`): done, reviewed (PR #7 review
   findings fixed). Unit tests against `internal/rpc/fakeserver`, and a live
-  test (`-tags integration`) passed against Azahar 2127.0-rc3. Next:
-  Phase 3.
+  test (`-tags integration`) passed against Azahar 2127.0-rc3.
+- Phase 3 (sessions and process manager, `internal/session`,
+  `internal/emu`): implemented per D9; live launch test passed. Next:
+  Phase 4 (screenshots via RPC).
 
 ## Blockers
 
@@ -72,6 +74,31 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 3
+- `emu.Manager.Launch`, under the host-wide store lock:
+  - checks the session name and the RPC port (holder named: session from
+    session files; on Linux the process via `/proc/net/udp` + `/proc/*/fd`);
+  - seeds `sessions/<name>.d/user/config/qt-config.ini` (PROTOCOL.md §7);
+  - starts Xvfb on the first free display from `:99` (Linux, unless a
+    display is given);
+  - starts Azahar detached with cwd = session dir (portable mode) and
+    `HOME` = session dir;
+  - waits for RPC, then verifies that the port belongs to the started PID
+    (or a descendant) and that the log has no `Error starting UDP server`.
+  Failures stop everything started and include the tail of Azahar's output
+  and log.
+- Live (2127.0-rc3, minimal 3DSX): launch 0.9 s; a second launch was
+  refused; bottom screenshot 320x240 (seed config applied); save wrote
+  `states/0000000000000000.01.cst`; load and stop worked, nothing left
+  running.
+- `emu.HasState` checks for a save state file before LoadState, because an
+  empty slot leaves Azahar stuck behind a modal dialog (Phase 2 finding).
+  Attached sessions cannot be checked (user dir unknown).
+- This workspace is still bookworm with the earlier live patch: `AppRun`
+  fails there (`checkrt` loads the bundled libstdc++, which needs glibc
+  2.38), so live tests here use `AZAHAR_BIN=/opt/azahar/usr/bin/azahar`. On
+  the trixie image `AppRun` works.
+
 ### Phase 2
 - Client design: one `net.Conn` from a `Dialer` (UDP today; any
   datagram-preserving conn such as `unixgram` works, so a per-session relay
