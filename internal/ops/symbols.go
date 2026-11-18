@@ -253,7 +253,9 @@ func (o *Ops) WaitFor(ctx context.Context, name, expr string, cond Condition, op
 		polls++
 		v, err := o.readTarget(ctx, name, tg)
 		if err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The RPC client reports the ctx deadline itself, possibly a
+			// moment before ctx.Err() is set.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) || (ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded)) {
 				break
 			}
 			if ctx.Err() != nil {
