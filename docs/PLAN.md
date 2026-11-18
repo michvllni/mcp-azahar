@@ -205,6 +205,13 @@ stable; check its docs for current API). stdio transport.
 - goreleaser for linux/amd64+arm64, darwin, windows (`launch` with Xvfb
   is Linux-first; `attach` and screenshots via RPC work everywhere;
   document it). Include LICENSE in archives.
+- Distribution per DECISIONS.md D10:
+  - container image `ghcr.io/michvllni/mcp-azahar` with Azahar, Xvfb and
+    Mesa, naming Azahar's version and source;
+  - npm package `mcp-azahar` for `npx -y mcp-azahar serve` (per-platform
+    binaries), published from the release workflow;
+  - MCP Registry entry via goreleaser's `mcp:` section (npm + OCI);
+  - README install section for all channels.
 - GitHub Actions: lint + unit tests on every push; integration tests in a
   job with Xvfb + Azahar + fixture built in the devkitarm image.
 

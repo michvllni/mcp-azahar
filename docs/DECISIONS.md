@@ -203,6 +203,42 @@ only worth it if parallel sessions on one host are needed before C lands.
 C), or parallel sessions on one host are needed before that (implement A,
 first checking user-namespace support on the CI runners).
 
+## D10 — Distribution: releases, container image, MCP Registry, npm
+**Decision (maintainer, 2026-11-18):** Ship v0.1 through four channels,
+all built by the release workflow (PLAN.md Phase 8):
+1. **GitHub Releases** (goreleaser archives) and
+   `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.
+2. **Container image `ghcr.io/michvllni/mcp-azahar`** with mcp-azahar,
+   Azahar (extracted AppImage), Xvfb and Mesa: runs headless sessions
+   without installing anything else; the natural way to use it in CI.
+3. **Official MCP Registry** entry, published through goreleaser's `mcp:`
+   section, listing the npm package and the container image.
+4. **npm package `mcp-azahar`** so MCP clients can run
+   `npx -y mcp-azahar serve` (a thin wrapper with per-platform binaries,
+   as esbuild and similar Go/Rust tools do).
+
+**Why:**
+- The MCP Registry only accepts npm, PyPI, NuGet and OCI packages, not
+  bare release binaries (goreleaser 2.20 `mcp` schema).
+- The image removes the hardest setup step (Azahar on a recent glibc plus
+  Xvfb) and is ideal for CI.
+- npx is the common way MCP clients start servers; it is convenient even
+  though a host still needs Azahar and a display for `launch`.
+- The name `mcp-azahar` was free on npm (D6).
+
+**Consequences:**
+- The image redistributes Azahar's GPL binary: the image and release
+  notes must name Azahar's version and source (tag, commit, repository).
+- goreleaser OSS has no npm publishing, so the npm package is built and
+  published by a separate workflow step (registry token or trusted
+  publishing), from the same release.
+- The image is large (Qt, Mesa: several hundred MB). Tool versions in it
+  follow the dev container pins.
+- Not now: Homebrew, PyPI, other registries.
+
+**Revisit if:** users ask for other channels, or the MCP Registry adds a
+package type for plain release binaries.
+
 ## Known unknowns (resolved in Phase 1)
 All answered in `docs/PROTOCOL.md`:
 - RPC wire format, payload limits and transport: §2–§5.

@@ -317,6 +317,9 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - Integration-test job deferred until the fixture exists (Phase 7).
 
 ## Deviations from PLAN.md
+- Distribution channels added to Phase 8 (DECISIONS.md D10): container
+  image, MCP Registry and an npm package for npx, besides releases and
+  `go install`.
 - `state save|load` takes slots 0-10 only, not paths: Azahar's RPC
   save/load commands only know slots (PROTOCOL.md §5.7). The state files are
   in the session's `user/states/`.
