@@ -6,7 +6,10 @@
 # context holds linux/amd64/mcp-azahar and the extra_files listed in
 # .goreleaser.yaml, not the repository. Run with -i for MCP over stdio; do not
 # publish UDP 45987 (D9).
-ARG BASE=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+# Full debian:trixie, not -slim: the slim image lacks libraries the AppImage
+# needs (e.g. libcom_err.so.2); this base and package list are the ones the CI
+# integration job runs Azahar with.
+ARG BASE=debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
 
 FROM ${BASE} AS azahar
 ARG AZAHAR_VERSION

@@ -90,7 +90,8 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 ### Phase 8a (container image)
 - Image built by goreleaser `dockers_v2` (since 2.12; still marked
   provisional, becomes `dockers` in v3) from `packaging/image/Dockerfile`:
-  `debian:trixie-slim` (pinned digest), Azahar extracted by
+  `debian:trixie` (pinned digest; `-slim` lacks `libcom_err.so.2` and
+  maybe more, found in CI), Azahar extracted by
   `install-azahar.sh` in a builder stage, Xvfb + Mesa + the Dockerfile's
   host libraries, non-root user `azahar`, workdir `/work`, entrypoint
   `mcp-azahar`, default command `serve`. Label
