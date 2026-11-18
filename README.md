@@ -4,11 +4,10 @@ Unofficial MCP server and CLI for the Azahar 3DS emulator: automate testing of 3
 > **Unofficial.** This project is not affiliated with or endorsed by the
 > [Azahar](https://github.com/azahar-emu/azahar) project.
 
-**Status:** early development ([docs/PLAN.md](docs/PLAN.md): phases 0–4
-done: tooling, protocol research, RPC client, sessions and process
-manager, screenshots). There are no usable commands yet besides `version`; the CLI
-arrives in Phase 5. Current status and open questions:
-[NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
+**Status:** feature-complete for v0.1 ([docs/PLAN.md](docs/PLAN.md) phases
+0–8): CLI, MCP server, scripted tests, integration tests against Azahar in CI,
+and release packaging (binaries, container image, npm, MCP Registry). The first
+release is pending. Current status and open questions: [NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
 documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## What it does
@@ -151,12 +150,35 @@ or number. `log_contains` only matches lines logged after the run started, and
 each match moves past its line.
 
 ## MCP server
-`mcp-azahar serve` speaks the Model Context Protocol over stdio. Configure your
-MCP client, e.g.:
+`mcp-azahar serve` speaks the Model Context Protocol over stdio. Tools only read
+and write files inside the server's working directory unless you allow more
+with `--allow-dir` (see below), so point it at your project.
+
+**Claude Code** (run in your project directory; `--scope project` shares it via
+`.mcp.json`):
+
+```sh
+claude mcp add azahar -- npx -y mcp-azahar          # npm
+claude mcp add azahar -- mcp-azahar serve           # installed binary
+claude mcp add azahar -- docker run -i --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD:/work" ghcr.io/michvllni/mcp-azahar     # container, Azahar included
+```
+
+**Claude Desktop** (`claude_desktop_config.json`: macOS
+`~/Library/Application Support/Claude/`, Windows `%APPDATA%\Claude\`). Desktop
+starts servers in no particular directory, so name the project:
 
 ```json
-{"mcpServers": {"azahar": {"command": "mcp-azahar", "args": ["serve"]}}}
+{"mcpServers": {"azahar": {
+  "command": "npx",
+  "args": ["-y", "mcp-azahar", "serve", "--allow-dir", "/path/to/your/project"]
+}}}
 ```
+
+Other clients take the same command and arguments. Agents with a shell can also
+skip MCP and call the CLI directly (`mcp-azahar press A --json`): the commands
+are the same, the output is cheaper in context, and sessions are shared, so a
+human can watch or poke the instance an agent drives.
 
 Every tool mirrors a CLI command and calls the same code, so an agent and a
 human with the CLI share sessions (`--session` or `$MCP_AZAHAR_SESSION` sets
@@ -240,6 +262,15 @@ In that case delete the release and its tag, fix the cause and publish
 again. `mcp-azahar version` (or `--version`) prints the version, commit and
 build date. No release has been published yet.
 
+A release also attaches Azahar's source tarball (GPL), pushes the container
+image `ghcr.io/michvllni/mcp-azahar` (`X.Y.Z`; `latest` only for releases),
+publishes the npm packages (pre-releases under the dist-tag `next`) with
+provenance, and finally the MCP Registry entry (releases only). Maintainer
+steps for the first release: run `scripts/npm-bootstrap.sh` (npm trusted
+publishing setup, at most 2 days before), publish the release, make the
+ghcr package public, then re-run the failed `MCP Registry` job. Details:
+[AGENTS.md](AGENTS.md#ci-and-releases).
+
 ## Contributing
 Bug reports and feature requests use the issue forms; emulator bugs belong
 to [Azahar](https://github.com/azahar-emu/azahar/issues). Pull requests use
@@ -256,8 +287,16 @@ isolated container, and never on an untrusted network. Because the port
 is fixed, only one RPC-enabled Azahar can run per host
 ([DECISIONS.md D9](docs/DECISIONS.md)); a configurable port and bind
 address is requested upstream
-([azahar-emu/azahar#2829](https://github.com/azahar-emu/azahar/issues/2829)). Report vulnerabilities
-privately, see [SECURITY.md](SECURITY.md).
+([azahar-emu/azahar#2829](https://github.com/azahar-emu/azahar/issues/2829)).
+The container image keeps the port inside the container's network
+namespace: do not publish it (`-p`) or use `--network host`.
+
+The MCP server treats the model's arguments as untrusted: its tools only read
+and write files inside the allowed directories (`serve --allow-dir`, default
+the working directory; [DECISIONS.md D11](docs/DECISIONS.md)), and results are
+size-capped. Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
 ## License
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE). The container image also contains
+Azahar (GPL-3.0, its source tarball is attached to each release), Qt
+(LGPL-3.0) and Debian packages; see its `/usr/share/doc/mcp-azahar/NOTICE.md`.
