@@ -105,6 +105,10 @@ git ls-files -z '*.sh' | xargs -0 shellcheck
 scripts/check-spdx.sh
 goreleaser check && goreleaser build --snapshot --clean
 ```
+CI-only: `mcp-publisher validate` of the rendered `server.json` (needs
+cosign and the downloaded mcp-publisher, see
+`scripts/install-mcp-publisher.sh`; not in the dev container), the
+fixture build, the integration tests and the container image.
 
 ## CI and releases
 - `.github/workflows/ci.yml` runs on every pull request and push to `main`:

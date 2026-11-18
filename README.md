@@ -50,8 +50,9 @@ assert on program state. Design rationale: [docs/DECISIONS.md](docs/DECISIONS.md
   `npx -y mcp-azahar <command>` runs the CLI. MCP client configuration:
   `{"command": "npx", "args": ["-y", "mcp-azahar"]}`. You still need Azahar
   (and Xvfb for headless `launch`) on the host.
-- **MCP Registry**: listed as `io.github.michvllni/mcp-azahar` (npm and
-  container packages), so registry-aware clients can install it by name.
+- **MCP Registry**: published as `io.github.michvllni/mcp-azahar` (npm and
+  container packages) from the first release on, so registry-aware clients
+  can install it by name.
 - **Release binaries**: archives for Linux, macOS and Windows (amd64, arm64)
   on the [releases page](https://github.com/michvllni/mcp-azahar/releases).
 - **Go**: `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.

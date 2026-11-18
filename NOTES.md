@@ -100,6 +100,9 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   entrypoint defaults to `serve`).
 - Running mcp-publisher in this workspace was not allowed (downloaded
   binary), so validation runs in CI only.
+- Open until the first release: the registry's OCI check meets an image
+  index (goreleaser pushes with an SBOM attestation); expected to resolve
+  linux/amd64, otherwise re-run the job after a fix.
 
 ### Phase 8b (npm)
 - Layout per D10: wrapper `mcp-azahar` (Node script, no dependencies of
