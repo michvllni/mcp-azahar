@@ -29,10 +29,13 @@ at the top of each section.
 - Phase 7 (fixture + integration tests): done, reviewed (PR #16); fixture
   built in CI, `TestFixture` passes here and in CI against 2127.0-rc3.
 - Phase 8 (release packaging): done, reviewed: container image (PR #17),
-  npm with trusted publishing (PR #21), MCP Registry (PR #24), README
-  setup for Claude Code/Desktop. The first release (v0.1.0) is the
-  maintainer's: publish by 2026-11-20 (npm trust expiry), ghcr public,
-  re-run registry.
+  npm with trusted publishing (PR #21, scoped in #26), MCP Registry (PR
+  #24), README setup for Claude Code/Desktop.
+- v0.1.0 released 2026-11-18 (run 44290073387): archives and Azahar's
+  source tarball on the release, `ghcr.io/michvllni/mcp-azahar:0.1.0` and
+  `latest` (public), npm `mcp-azahar` + 6 `@michvllni/` packages with
+  provenance (`npm audit signatures` verified), MCP Registry entry
+  `io.github.michvllni/mcp-azahar` 0.1.0.
 - PLAN "Definition of done": go test, the integration suite, the green
   `smoke.yaml` run and an MCP client launching the fixture, pressing
   buttons, getting both screens and reading `test_state` are covered by
@@ -111,9 +114,11 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   entrypoint defaults to `serve`).
 - Running mcp-publisher in this workspace was not allowed (downloaded
   binary), so validation runs in CI only.
-- Open until the first release: the registry's OCI check meets an image
-  index (goreleaser pushes with an SBOM attestation); expected to resolve
-  linux/amd64, otherwise re-run the job after a fix.
+- v0.1.0: the registry accepted the image index (linux/amd64 image plus
+  attestation manifest). Its first attempt failed because npm was still
+  processing 0.1.0 ("version '0.1.0' was not found"; npm: "may take a
+  few minutes to become available", visible about 2 minutes later); the
+  re-run passed. The job now waits for npm first.
 
 ### Phase 8b (npm)
 - Bootstrap, 2026-11-18: `scripts/npm-bootstrap.sh` (since removed)

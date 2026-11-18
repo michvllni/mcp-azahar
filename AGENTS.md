@@ -123,9 +123,8 @@ fixture build, the integration tests and the container image.
 - The release job first attaches Azahar's source tarball (GPL, D10),
   then goreleaser pushes the image `ghcr.io/michvllni/mcp-azahar`
   (`<version>`, `latest` unless a pre-release) before uploading the
-  archives. One-time, after the first release: set the ghcr package to
-  public (package settings) and check it is linked to the repository;
-  private packages break `docker pull` and the MCP Registry's OCI check.
+  archives. The ghcr package is public (done after v0.1.0); a private
+  package would break `docker pull` and the MCP Registry's OCI check.
   If the job fails after the push, re-run it (uploads use the existing
   release) rather than deleting the release, or delete the pushed tags
   too. The SBOM attestation and the push only run at a real release (CI
@@ -135,9 +134,9 @@ fixture build, the integration tests and the container image.
   and the wrapper `mcp-azahar` with trusted publishing (`id-token: write`,
   no token; `-rc` versions get the dist-tag `next`, and also `latest`
   while a package has only a `0.0.0-*` placeholder). Re-runs skip
-  published versions. All 7 packages exist (staged placeholder
-  `0.0.0-bootstrap`) with a trusted publisher for `release.yml` since
-  2026-11-18 (NOTES.md Phase 8b). A new package needs the same by hand,
+  published versions. All 7 packages have a trusted publisher for
+  `release.yml` (set up 2026-11-18, NOTES.md Phase 8b; v0.1.0 published
+  through it). A new package needs the same by hand,
   logged in to npm: `npm stage publish --access public --tag bootstrap`
   of a placeholder `package.json`, then
   `npm trust github <pkg> --file release.yml --repo michvllni/mcp-azahar --allow-publish --yes`;
@@ -155,8 +154,9 @@ fixture build, the integration tests and the container image.
   installed by `scripts/install-mcp-publisher.sh` (pinned, Sigstore
   bundle verified with cosign). The registry checks `mcpName` in the npm
   package and the image label `io.modelcontextprotocol.server.name`, so
-  both must keep that name. First release: the ghcr package is private,
-  so this job fails until the package is public; then re-run it. CI runs
+  both must keep that name. The job first waits (up to 15 minutes) until
+  npm serves the new version: npm processes new versions for a few
+  minutes. If it still fails, re-run only this job. CI runs
   `mcp-publisher validate` on the rendered file.
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
   then create a GitHub release on `main` with a new tag `v<version>` and
