@@ -230,20 +230,24 @@ func TestZombieLeaderWithLiveThreadsIsAlive(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 not available")
 	}
-	// The main thread exits with pthread_exit while another thread lives on
-	// for a second: the leader is a zombie, but the process (and its file
-	// descriptors) still exist.
+	// The main thread exits with pthread_exit while another thread blocks on
+	// stdin: the leader is a zombie, but the process (and its file
+	// descriptors) still exist until stdin is closed.
 	cmd := exec.CommandContext(t.Context(), py, "-c",
-		"import threading, ctypes, time\n"+
-			"threading.Thread(target=time.sleep, args=(1.0,)).start()\n"+
+		"import threading, ctypes, sys\n"+
+			"threading.Thread(target=sys.stdin.read).start()\n"+
 			"ctypes.CDLL(None).pthread_exit(None)\n")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Skip(err)
 	}
 	p := ProcFor(cmd.Process.Pid)
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 	// Wait until the main thread is a zombie.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		b, _ := os.ReadFile("/proc/" + strconv.Itoa(p.PID) + "/stat")
 		if i := strings.LastIndexByte(string(b), ')'); i > 0 && strings.HasPrefix(string(b[i+2:]), "Z") {
@@ -257,8 +261,9 @@ func TestZombieLeaderWithLiveThreadsIsAlive(t *testing.T) {
 	if !Alive(p) {
 		t.Fatal("process with a zombie main thread but a live thread reported dead")
 	}
-	// After the other thread exits, it is a plain zombie: dead.
-	deadline = time.Now().Add(3 * time.Second)
+	// Let the other thread exit: then it is a plain zombie, i.e. dead.
+	_ = stdin.Close()
+	deadline = time.Now().Add(5 * time.Second)
 	for Alive(p) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
