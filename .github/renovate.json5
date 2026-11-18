@@ -34,7 +34,7 @@
     {
       // Tool bumps are build changes (default would be chore).
       matchManagers: ['custom.regex'],
-      matchDepNames: ['golangci/golangci-lint', 'goreleaser/goreleaser', 'rhysd/actionlint'],
+      matchDepNames: ['golangci/golangci-lint', 'goreleaser/goreleaser', 'rhysd/actionlint', 'modelcontextprotocol/registry'],
       semanticCommitType: 'build',
     },
     {

@@ -87,6 +87,23 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 8c (MCP Registry)
+- Registry docs (modelcontextprotocol/registry `docs/modelcontextprotocol-io`
+  and modelcontextprotocol.io/registry, read 2026-11-18): schema
+  `2025-12-11`; description <= 100 characters; npm entries carry a
+  version, OCI entries the tag in `identifier`; packages must be
+  published first; GitHub OIDC login grants `io.github.<owner>/*` with
+  no secret. The docs pin mcp-publisher v1.8.1 and verify its Sigstore
+  bundle with cosign; `scripts/install-mcp-publisher.sh` does the same.
+- Not documented there: whether a version can be republished, and how
+  clients pass `-i` for OCI stdio servers (our image needs `-i`; the
+  entrypoint defaults to `serve`).
+- Running mcp-publisher in this workspace was not allowed (downloaded
+  binary), so validation runs in CI only.
+- Open until the first release: the registry's OCI check meets an image
+  index (goreleaser pushes with an SBOM attestation); expected to resolve
+  linux/amd64, otherwise re-run the job after a fix.
+
 ### Phase 8b (npm)
 - Layout per D10: wrapper `mcp-azahar` (Node script, no dependencies of
   its own) with optionalDependencies on six platform packages built from

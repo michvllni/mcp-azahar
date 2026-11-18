@@ -237,8 +237,9 @@ all built by the release workflow (PLAN.md Phase 8):
   `mcpName` in package.json (npm) and the
   `io.modelcontextprotocol.server.name` label (OCI). The registry entry is
   published last, after npm and the image, with GitHub OIDC
-  (`id-token: write`): `mcp-publisher` as the final workflow step, or
-  goreleaser's `mcp` section if its order allows it.
+  (`id-token: write`): `mcp-publisher` in its own release job (`registry`),
+  so a failure there (e.g. the new ghcr package still private) can be
+  re-run alone. Only non-pre-releases go to the registry.
 - **npm:** goreleaser OSS has no npm publishing, so a workflow step
   (`scripts/npm-packages.sh`) publishes the platform packages, then the
   wrapper, with **trusted publishing** (OIDC from `release.yml`, automatic
