@@ -18,6 +18,8 @@ be committed.
 cmd/mcp-azahar/      thin Cobra front end (CLI; later also `serve` for MCP);
                      main.go holds `const version`, the release version
 internal/            all behavior; CLI and MCP call the same functions
+  rpc/               Azahar RPC client (protocol v2, docs/PROTOCOL.md)
+    fakeserver/      in-process fake Azahar RPC server for tests
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
@@ -28,8 +30,8 @@ docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
-Planned packages (see PLAN.md): `internal/rpc`, `internal/session`,
-`internal/emu`, `internal/capture`, `internal/server`.
+Planned packages (see PLAN.md): `internal/session`, `internal/emu`,
+`internal/capture`, `internal/server`.
 
 ## Build, test, lint
 ```sh
@@ -38,11 +40,20 @@ go test ./...
 golangci-lint run ./...
 go run ./cmd/mcp-azahar version
 ```
-Integration tests (later phases) use the build tag `integration`.
+Integration tests use the build tag `integration` and are skipped unless
+their environment is set. Live RPC client test against a running Azahar
+(app loaded, RPC enabled, single-screen layout):
+```sh
+AZAHAR_RPC_ADDR=127.0.0.1:45987 [AZAHAR_RPC_SCRATCH=0x...] \
+  go test -tags integration -run TestLiveAzahar -v ./internal/rpc/
+```
+`AZAHAR_RPC_SCRATCH` is the hex address of 8 writable bytes the app does
+not use; it enables the write and save/load checks.
 
 Everything CI checks, runnable locally (all tools are in the dev container):
 ```sh
-go mod tidy -diff && go vet ./... && go test -race -count=1 ./...
+go mod tidy -diff && go vet ./... && go vet -tags integration ./...
+go test -race -count=1 ./...
 golangci-lint run ./...
 actionlint
 git ls-files -z '*.sh' | xargs -0 shellcheck
@@ -81,6 +92,16 @@ goreleaser check && goreleaser build --snapshot --clean
   file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI
   and MCP.
+- `internal/rpc` mirrors `docs/PROTOCOL.md`: comments cite its sections.
+  Behavior Azahar shows must be reproduced in `internal/rpc/fakeserver`
+  (empty replies, dropped datagrams, LoadState closing and re-binding the
+  port, empty save slots being accepted), so unit tests catch client
+  mistakes without an emulator.
+- Only idempotent RPC requests are resent; TakeScreenshot, SaveState and
+  LoadState never are (`RequestType.Idempotent`). "Connection refused"
+  counts as a lost attempt (the port is closed while Azahar restarts RPC).
+- A failed LoadState leaves Azahar stopped behind a modal dialog that
+  blocks all RPC: check the state file exists before calling LoadState.
 - Never guess the Azahar RPC wire format: `docs/PROTOCOL.md` is the
   contract, derived from Azahar source with `path:line` references at a
   pinned commit. When bumping Azahar, re-check it against the new source.

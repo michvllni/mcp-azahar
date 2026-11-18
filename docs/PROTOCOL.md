@@ -41,7 +41,11 @@ not from older Citra clients, and checked against a running Azahar.
 - No authentication, no encryption, no handshake, no version negotiation.
 - Socket buffers are raised to at least 2× (send) / 4× (receive) the maximum
   packet size (`udp_server.cpp:22-23`). Clients should do the same
-  (AzaharRPC.py does 2× for both).
+  (AzaharRPC.py and `internal/rpc` do 2× for both).
+- While Azahar recreates the server (LoadState), the port is closed: a
+  connected UDP client gets "connection refused" (ICMP) instead of silence
+  and must treat it like a lost reply. On Windows, Go suppresses these
+  errors for UDP, so the client only sees silence.
 
 ## 3. Packet format
 
@@ -109,8 +113,12 @@ waits ≥ 30 s for a screenshot without resending.
   is handed to the **emulation thread** and executed between CPU slices
   (`rpc_server.cpp:480-485`, `core.cpp:330-334`). Memory access is then
   consistent with the emulated state.
-- **Not verified:** whether requests are still processed while emulation is
-  paused (Phase 3: test once pausing is possible).
+- **Requests are not processed while emulation is stopped** (*observed*
+  with Azahar's modal "Save/load Error" dialog, which stops emulation until
+  dismissed): no reply at all, not even to `SetGetProcess`, and
+  TakeScreenshot times out. Expected for any pause in synchronous mode,
+  since the requests wait for the emulation thread; a user pause was not
+  tested.
 
 ## 5. Request types
 
@@ -221,14 +229,23 @@ the selected process (§5.4).
 `rpc_server.cpp:324-334`, `src/core/savestate.h:25`, `savestate.cpp:41-50`
 - Slots 0..10 (`SaveStateSlotCount = 11`); slot 0 is hidden in the Qt menus.
 - Reply `accepted u32`: 1 if the emulator was running and the signal was
-  queued, 0 otherwise (*observed* 0 for slot 11). **Accepted is not done:**
+  queued; 0 for an invalid slot (*observed* for slot 11), no app, or another
+  save/load still pending (`core.cpp:347-356`). **Accepted is not done:**
   the save or load runs afterwards on the emulation thread.
+- **A load from an empty slot is accepted** and fails afterwards
+  (`core.cpp:167-170`, `ErrorSavestate`). The Qt frontend then stops
+  emulation and shows a modal "Save/load Error" dialog until someone clicks
+  OK (`src/citra_qt/citra_qt.cpp:4243-4275`); meanwhile RPC answers nothing
+  (*observed*, §4). A state from another Azahar build gives a similar
+  dialog. Automation must check that the state file exists before loading;
+  `internal/rpc` reports `ErrStateNotLoaded` when no reload follows.
 - Files: `<user>/states/<title_id %016X>.<slot %02d>.cst` (with a movie
   playing: `<title_id>.movie<movie_id>.<slot>.cst`). *Observed*:
   `states/0000000000000000.01.cst`.
 - After LoadState, expect one lost request and re-select the process
-  (§1). *Observed*: memory restored about 2 s after the request, including a
-  2 s client timeout; the real duration is unknown.
+  (§1). *Observed*: with the minimal test app, a LoadState including the
+  server restart and re-selection took 0.83 s (Phase 2 live test); larger
+  apps will take longer.
 - **Not verified:** whether the SetInput override survives a load.
 
 ### 5.8 SetInput (11)
