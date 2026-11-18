@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/michvllni/mcp-azahar/internal/emu"
 	"github.com/michvllni/mcp-azahar/internal/rpc"
@@ -35,6 +36,9 @@ var (
 // file lock.
 type Ops struct {
 	M *emu.Manager
+	// SaveWait bounds how long SaveState waits for the state file
+	// (DefaultSaveWait if 0).
+	SaveWait time.Duration
 
 	mu    sync.Mutex
 	locks map[string]*sessionLocks

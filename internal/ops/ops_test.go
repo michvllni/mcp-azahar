@@ -575,3 +575,53 @@ func TestSaveScreenshot(t *testing.T) {
 		t.Fatalf("scale 99: %v", err)
 	}
 }
+
+func TestSaveStateWaitsForFile(t *testing.T) {
+	o, _ := setup(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	// A launched session (known user dir) whose "emulator" is this process.
+	if _, err := o.M.Update(ctx, "t", func(s *session.Session) error {
+		s.Kind, s.Dir = session.KindLaunched, dir
+		self := session.ProcFor(os.Getpid())
+		s.Azahar = &self
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = o.M.Store.Delete("t") }() // never let cleanup stop this process
+	states := filepath.Join(dir, "user", "states")
+	_ = os.MkdirAll(states, 0o700)
+	// Azahar writes the file about a second after accepting; here 200 ms.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = os.WriteFile(filepath.Join(states, "0000000000000000.02.cst"), []byte("state"), 0o600)
+	}()
+	start := time.Now()
+	if err := o.SaveState(ctx, "t", 2); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 200*time.Millisecond {
+		t.Fatalf("SaveState returned after %v, before the file was written", d)
+	}
+	// Overwriting an existing state in place with the same size and
+	// modification time (coarse timestamps) still counts as written.
+	f := filepath.Join(states, "0000000000000000.02.cst")
+	mod := time.Now().Add(-time.Hour).Truncate(time.Second)
+	_ = os.Chtimes(f, mod, mod)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = os.WriteFile(f, []byte("STATE"), 0o600)
+		_ = os.Chtimes(f, mod, mod)
+	}()
+	if err := o.SaveState(ctx, "t", 2); err != nil {
+		t.Fatalf("rewrite in place: %v", err)
+	}
+	o.SaveWait = 300 * time.Millisecond
+	if err := o.SaveState(ctx, "t", 2); err == nil || !strings.Contains(err.Error(), "did not write") {
+		t.Fatalf("unchanged existing file counted as written: %v", err)
+	}
+	if err := o.SaveState(ctx, "t", 5); err == nil || !strings.Contains(err.Error(), "did not write") {
+		t.Fatalf("no file written: %v", err)
+	}
+}

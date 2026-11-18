@@ -242,6 +242,10 @@ the selected process (§5.4).
 - Files: `<user>/states/<title_id %016X>.<slot %02d>.cst` (with a movie
   playing: `<title_id>.movie<movie_id>.<slot>.cst`). *Observed*:
   `states/0000000000000000.01.cst`.
+- *Observed*: the reply to SaveState comes within milliseconds, but the
+  file appears about 1 s later (1.03-1.12 s in four saves with the minimal
+  test app). A load right after a save fails unless the caller waits for
+  the file (`ops.SaveState` does for launched sessions).
 - After LoadState, expect one lost request and re-select the process
   (§1). *Observed*: with the minimal test app, a LoadState including the
   server restart and re-selection took 0.83 s (Phase 2 live test); larger

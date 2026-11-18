@@ -26,6 +26,7 @@ RUN apt-get update \
       libfontconfig1 libdbus-1-3 x11-utils imagemagick file jq unzip curl python3 \
       libopengl0 libharfbuzz0b libjack-jackd2-0 libasound2t64 libfribidi0 libusb-1.0-0 \
       squashfs-tools binutils ca-certificates shellcheck \
+      gcc-arm-none-eabi libnewlib-arm-none-eabi \
  && rm -rf /var/lib/apt/lists/*
 
 COPY install-azahar.sh install-go-tools.sh /tmp/devcontainer/

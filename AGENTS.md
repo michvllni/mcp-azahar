@@ -24,9 +24,14 @@ internal/            all behavior; CLI and MCP call the same functions
   session/           session files, host-wide lock, process liveness
   emu/               launch/attach/stop/status of Azahar (+ Xvfb), D9 rules
   capture/           screenshots via RPC (D4), 3DS-style composite
+  symbols/           ELF symbols + DWARF types for read-symbol/wait-for
+    testdata/        symbols.c, realworld/ (C + C++, DWARF 5 and 2) and
+                     their committed ARM ELFs
+  sequence/          YAML/JSON scripted tests (sequence command)
   ops/               every user-facing operation, shared by CLI and MCP
   version/           version string formatting; Commit/Date set via -ldflags
-scripts/             check-version.sh (tag vs. version), check-spdx.sh
+scripts/             check-version.sh (tag vs. version), check-spdx.sh,
+                     build-testdata.sh (rebuilds the committed test ELFs)
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
 .github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
 .github/             issue templates, PR template, renovate.json5
@@ -111,6 +116,11 @@ goreleaser check && goreleaser build --snapshot --clean
   and MCP. New features go into `internal/ops` first; front ends only parse
   arguments and format output. Errors: `ops.ErrUsage` → exit 2,
   `ops.ErrCheckFailed` → exit 3, `session.ErrNotFound` → exit 4.
+- Test binaries in `testdata/` are built from committed sources with
+  `scripts/build-testdata.sh` (ARM toolchain in the dev container); commit
+  source and binary together.
+- Sequence steps map 1:1 to ops calls; a new CLI command that makes sense
+  in a script also gets a sequence action (and later an MCP tool).
 - Input state held across commands lives in the session file (`Held`):
   Azahar replaces the whole input on every SetInput, and each CLI call is a
   separate process.
@@ -189,3 +199,7 @@ goreleaser check && goreleaser build --snapshot --clean
   dir, `azahar.out` and `xvfb.out`.
 - Never file issues or comment on azahar-emu/azahar yourself, and do not
   commit drafts for upstream: hand them to the maintainer, who posts them.
+- Symbols: only DWARF variables with a `DW_OP_addr` location are
+  addressable; never index stack locals (they would shadow globals).
+  Bitfield offsets differ between DWARF 2/3 and 4+ (NOTES.md Phase 5b);
+  test symbol changes against both `realworld*.elf` fixtures.

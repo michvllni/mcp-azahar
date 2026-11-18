@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"debug/elf"
 	"encoding/json"
 	"image/png"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/michvllni/mcp-azahar/internal/ops"
 	"github.com/michvllni/mcp-azahar/internal/rpc"
 	"github.com/michvllni/mcp-azahar/internal/rpc/fakeserver"
+	"github.com/michvllni/mcp-azahar/internal/sequence"
 	"github.com/michvllni/mcp-azahar/internal/session"
 )
 
@@ -204,5 +206,97 @@ func TestCLIJSONShapes(t *testing.T) {
 	held := st["session"].(map[string]any)["held"].(map[string]any)
 	if b, ok := held["buttons"].([]any); !ok || len(b) != 0 {
 		t.Fatalf("held buttons must be an empty array: %v", held["buttons"])
+	}
+}
+
+// attachWithELF attaches to the fake with the symbols test ELF loaded into
+// its memory.
+func attachWithELF(t *testing.T, c *cli) string {
+	t.Helper()
+	elfPath, _ := filepath.Abs("../../internal/symbols/testdata/symbols.elf")
+	f, err := elf.Open(elfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	for _, s := range f.Sections {
+		if s.Type == elf.SHT_PROGBITS && s.Addr != 0 {
+			b, _ := s.Data()
+			c.srv.SetMemory(uint32(s.Addr), b)
+		}
+	}
+	c.ok("attach", "--address", c.srv.Addr(), "--elf", elfPath)
+	return elfPath
+}
+
+func TestCLISymbols(t *testing.T) {
+	c := newCLI(t)
+	attachWithELF(t, c)
+	if out := c.ok("symbols", "--filter", "state"); !strings.Contains(out, "0x00101058") || !strings.Contains(out, "struct test_state") {
+		t.Fatalf("symbols: %q", out)
+	}
+	if out := c.ok("read-symbol", "test_state.touch"); out != "test_state.touch = {\"x\":160,\"y\":120}\n" {
+		t.Fatalf("read-symbol: %q", out)
+	}
+	var v ops.Value
+	if err := json.Unmarshal([]byte(c.ok("read-symbol", "test_state.mode", "--json")), &v); err != nil || v.Value != "MODE_RUN" || v.Address != "0x00101079" {
+		t.Fatalf("read-symbol --json: %+v, %v", v, err)
+	}
+	if out := c.ok("read-symbol", "0x00101080", "--type", "u8"); !strings.Contains(out, "= 3") {
+		t.Fatalf("read-symbol address: %q", out)
+	}
+	if out := c.ok("wait-for", "test_state.frame", "7", "--timeout", "2s"); !strings.HasPrefix(out, "reached: test_state.frame = 7") {
+		t.Fatalf("wait-for: %q", out)
+	}
+	code, out, _ := c.run("wait-for", "test_state.frame", "8", "--timeout", "300ms")
+	if code != exitCheck || !strings.HasPrefix(out, "timed out: test_state.frame = 7") {
+		t.Fatalf("wait-for timeout: exit %d, %q", code, out)
+	}
+	for _, args := range [][]string{
+		{"read-symbol", "nope"},
+		{"read-symbol", "0x10", "--type", "u128"},
+		{"wait-for", "counter"},
+		{"wait-for", "counter", "1", "--op", "about"},
+	} {
+		if code, _, errOut := c.run(args...); code != exitUsage {
+			t.Errorf("%v: exit %d (%s), want 2", args, code, errOut)
+		}
+	}
+}
+
+func TestCLISequence(t *testing.T) {
+	c := newCLI(t)
+	attachWithELF(t, c)
+	dir := t.TempDir()
+	pass := filepath.Join(dir, "pass.yaml")
+	_ = os.WriteFile(pass, []byte("steps:\n  - press: A\n  - assert: {target: test_state.frame, value: 7}\n  - screenshot: {output: shot.png}\n"), 0o600)
+	if out := c.ok("sequence", pass); !strings.Contains(out, "ok    1 press") || !strings.HasSuffix(out, "passed: 3 steps\n") {
+		t.Fatalf("passing sequence: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shot.png")); err != nil {
+		t.Fatalf("screenshot not relative to the sequence file: %v", err)
+	}
+	fail := filepath.Join(dir, "fail.yaml")
+	_ = os.WriteFile(fail, []byte("steps:\n  - assert: {target: test_state.frame, value: 8}\n  - press: B\n"), 0o600)
+	code, out, _ := c.run("sequence", fail)
+	if code != exitCheck || !strings.Contains(out, "FAIL  1 assert") || !strings.Contains(out, "1 skipped") {
+		t.Fatalf("failing sequence: exit %d, %q", code, out)
+	}
+	code, out, _ = c.run("sequence", fail, "--json")
+	var rep sequence.Report
+	if err := json.Unmarshal([]byte(out), &rep); err != nil || code != exitCheck || rep.Passed || rep.Skipped != 1 {
+		t.Fatalf("--json: exit %d, %+v, %v", code, rep, err)
+	}
+	// From stdin.
+	var stdout, stderr bytes.Buffer
+	cmd := newRootCmdWith(&app{newOps: func() (*ops.Ops, error) { return c.o, nil }})
+	cmd.SetIn(strings.NewReader(`{"steps": [{"press": "A"}]}`))
+	if code := run(cmd, []string{"sequence", "-"}, &stdout, &stderr); code != exitOK {
+		t.Fatalf("stdin: exit %d, %s", code, stderr.String())
+	}
+	bad := filepath.Join(dir, "bad.yaml")
+	_ = os.WriteFile(bad, []byte("steps:\n  - press: A\n    wait: 1s\n"), 0o600)
+	if code, _, _ := c.run("sequence", bad); code != exitUsage {
+		t.Fatalf("invalid file: exit %d, want 2", code)
 	}
 }

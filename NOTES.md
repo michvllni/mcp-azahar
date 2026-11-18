@@ -20,8 +20,10 @@ at the top of each section.
   passed (top 400x240, bottom 320x240, composite 400x480).
 - Phase 5a (CLI part 1, `internal/ops` + commands launch, attach, stop,
   status, sessions, version, press, hold, release, touch, circle-pad,
-  screenshot, read, write, state, logs): done; end-to-end run against Azahar
-  passed. Next: Phase 5b (symbols, read-symbol, wait-for, sequence).
+  screenshot, read, write, state, logs): done, reviewed (PR #12, two
+  rounds); end-to-end run against Azahar passed.
+- Phase 5b (symbols, read-symbol, wait-for, sequence): implemented; live
+  run against Azahar passed. Next: Phase 6 (MCP server).
 
 ## Blockers
 
@@ -75,11 +77,76 @@ at the top of each section.
 | actionlint | 1.7.12 | yes | `.devcontainer/install-go-tools.sh` (Renovate) |
 | Go | 1.27.3 | preinstalled | `devcontainer.json` Go feature |
 | Cobra | v1.10.2 | `go.mod` | `go.mod` |
+| apt: gcc-arm-none-eabi libnewlib-arm-none-eabi (test ELFs) | distro | yes | `.devcontainer/Dockerfile` |
 | devkitPro (devkitARM, libctru, 3dstools) | — | **no** (HTTP 403) | not recorded; CI fallback planned |
 
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 5b
+- `internal/symbols` reads ELF symbols (object/func) and DWARF variable
+  types with Go's `debug/elf` and `debug/dwarf`. Expressions are a name
+  plus `.field` and `[index]` parts; values decode by C type (signed and
+  unsigned ints, float, `_Bool`, bitfields, enums by name, pointers as
+  numbers, plain `char` arrays as strings, structs in declaration order,
+  other arrays as lists; values over 64 KiB are not decoded).
+  Without DWARF only plain symbol names work, read as bytes.
+- Review of #14: the first index took every named `DW_TAG_variable`, so a
+  function's stack local could shadow a global of the same name, C++
+  statics were missing, and same-named file statics clashed. The index now
+  takes only variables with a `DW_OP_addr` location, names them by scope
+  (`ns::v`, `K::s`, static locals `func::v`, mangled names too), follows
+  `DW_AT_specification`/`abstract_origin`, and resolves clashes by
+  preferring the external one, else asks for `file.c:name`.
+- Bitfields: DWARF 4+ gives `DW_AT_data_bit_offset`; DWARF 2/3 give
+  `DW_AT_bit_offset` counted from the most significant bit of a storage
+  unit (`byte_size`): on little-endian, position = byte_offset*8 +
+  byte_size*8 - bit_offset - bit_size. DWARF 2/3 also name mangled C++
+  names `DW_AT_MIPS_linkage_name` (0x2007). Both encodings are tested with
+  `testdata/realworld.elf` (DWARF 5) and `realworld-dwarf2.elf`.
+- ARM plain `char` is unsigned: DWARF calls it `char` with an unsigned
+  encoding, so strings are detected by the name "char", not the encoding;
+  `uint8_t`/`signed char` arrays stay numbers.
+- Test input: `internal/symbols/testdata/symbols.c`, built for ARM with
+  Debian's `gcc-arm-none-eabi` (`scripts/build-testdata.sh`) and committed
+  as a 7 KB ELF plus a stripped variant, so tests need no toolchain. Note:
+  arm-none-eabi uses short enums (1 byte).
+- `wait-for` and the sequence `wait_for` poll every 50 ms; comparisons:
+  numbers numerically (decimal or 0x; `float` literals rounded to
+  float32), bool and strings with eq/ne, enums by name (eq/ne) or number,
+  `changed` against the first read. Timeout = check failure (exit 3), also
+  if no read succeeded in time; a cancel is not a check failure.
+- Sequence files: YAML or JSON (`go.yaml.in/yaml/v3` with unknown keys
+  rejected, one document per file), one action per step, all steps
+  validated before the first runs, stop at the first failure. Invalid files
+  exit 2; failed assert/wait_for/log_contains exit 3; other step errors
+  exit 1, even if the cause is an argument problem inside the step.
+- Live finding: Azahar writes a save state about 1 s after accepting the
+  request, so `state save` and the sequence `save_state` now wait for the
+  file (launched sessions); a save followed by an immediate load works.
+  A new save is recognized by path, mtime, size, inode or content hash
+  (an in-place rewrite within the timestamp resolution), and done after
+  three equal polls 100 ms apart.
+- `log_contains` starts at the log's end when the run starts and moves
+  past each match, so old lines and one line matching twice cannot pass.
+- For the MCP server (Phase 6): `sequence.Options.RestrictPaths` keeps
+  file paths inside the sequence's directory; step results carry
+  `error_kind` and `duration_ms`, `wait-for` `elapsed_ms` and `polls`.
+- Live run (2127.0-rc3, minimal 3DSX, symbols test ELF: the app's data
+  page covers its addresses): symbols, read-symbol before/after a write,
+  wait-for reached and timed out (exit 3), and a sequence with
+  press/write/save/load/assert/screenshot/log_contains passed; an unknown
+  symbol in a step exited 1 (since the re-review it is caught before
+  the first step and exits 2).
+- Re-review of #14: arm-none-eabi short enums are unsigned (an enum with
+  200 is one byte 0xc8), so enums decode unsigned unless an enumerator is
+  negative, also as bitfields. Out-of-line C++ methods have no
+  `DW_AT_name`, only `DW_AT_specification`: subprogram names are resolved
+  through it, so statics read as `K::m::calls`. Go's `debug/dwarf` does
+  not say which bit offset attribute a member had; the index records
+  structs whose members carry `DW_AT_data_bit_offset`. Verified with GCC
+  12 at DWARF 2, 3, 4 and 5.
+
 ### Phase 5a
 - `internal/ops` holds every operation once; the CLI only parses and
   prints. MCP (Phase 6) will call the same functions.
