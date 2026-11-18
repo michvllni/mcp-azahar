@@ -148,11 +148,14 @@ failed` (an assert or wait that did not hold), or `no running session`.
 relative and stay inside the sequence's directory. `azahar_screenshot` can also
 save the PNG (`output`).
 
-Files: tools only read and write files (app, ELF, log, sequence, screenshot
-output) inside the server's working directory, or the directories given with
-`serve --allow-dir DIR` (repeatable); symlinks pointing out are refused.
-Relative paths are relative to the first allowed directory. Results are capped
-to fit a model's context: `azahar_read_memory` reads at most 4096 bytes,
+Files (DECISIONS.md D11): tools only read and write files (app, ELF, log,
+sequence and the paths inside it, screenshot outputs) inside the server's
+working directory, or the directories given with `serve --allow-dir DIR`
+(repeatable); paths are checked after following symlinks, and dangling
+symlinks are not written through. Relative paths are relative to the first
+allowed directory. Results are capped to fit a model's context:
+`azahar_read_memory` reads at most 4096 bytes, `azahar_read_symbol` and
+`azahar_wait_for` values at most 16 KiB,
 `azahar_logs` returns the last 200 lines by default (`tail` up to 1000),
 `azahar_symbols` at most 500 entries (`filter` narrows), and screenshots use
 scale 1-4 (0: Azahar's internal resolution). `serve` ignores `--timeout`.

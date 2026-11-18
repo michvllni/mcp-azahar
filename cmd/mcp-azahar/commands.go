@@ -238,7 +238,7 @@ An existing output file is overwritten.`,
 			if err != nil {
 				return err
 			}
-			files, err := ops.SaveScreenshot(shots, out, split)
+			files, err := ops.SaveScreenshot(shots, out, split, nil)
 			if err != nil {
 				return err
 			}

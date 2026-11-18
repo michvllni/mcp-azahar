@@ -111,6 +111,12 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   the log path absolute. The parity test now also maps every CLI flag to
   a tool property (`flagRenames`, `flagOnly`), and a subprocess test
   checks that `serve`'s stdout carries only JSON-RPC.
+- Re-review of #15: three routes escaped the policy (a dangling symlink
+  as the write target, split screenshot names derived after the check,
+  sequence paths checked only as text) and `read_symbol` with a large
+  `len` bypassed the caps. All files now go through the check (also
+  sequence paths and split names), dangling links are refused, values
+  are capped at 16 KiB. Recorded as DECISIONS.md D11 (maintainer).
 - Live smoke (2127.0-rc3, `serve` over stdio driven by a JSON-RPC script):
   initialize, tools/list (20), launch, status, read_symbol, screenshot
   (one 400x480 PNG for both), a save/load/press sequence and stop passed.

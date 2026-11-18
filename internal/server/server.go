@@ -138,6 +138,11 @@ func (s *Server) path(p string, write bool) (string, error) {
 	switch {
 	case err == nil:
 	case write && errors.Is(err, os.ErrNotExist):
+		if fi, lerr := os.Lstat(abs); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			// A dangling link: writing would create its target, wherever
+			// that is.
+			return "", fmt.Errorf("%w: %q is a symlink to a missing file", ops.ErrUsage, p)
+		}
 		dir, derr := filepath.EvalSymlinks(filepath.Dir(abs))
 		if derr != nil {
 			return "", derr
@@ -237,7 +242,8 @@ func addRaw[In any](s *Server, spec Spec, t *mcp.Tool, timeout time.Duration, h 
 
 // Limits that keep results within a model's context.
 const (
-	maxRead        = 4096 // bytes per azahar_read_memory
+	maxRead        = 4096     // bytes per azahar_read_memory
+	maxValue       = 16 << 10 // bytes per azahar_read_symbol/wait_for value
 	defaultLogTail = 200
 	maxLogTail     = 1000
 	maxSymbols     = 500
@@ -477,7 +483,7 @@ func (s *Server) screenTools() {
 			info["screens"] = []map[string]any{{"screen": "both", "width": w, "height": h}}
 		}
 		if out != "" {
-			files, err := ops.SaveScreenshot(shots, out, in.Split)
+			files, err := ops.SaveScreenshot(shots, out, in.Split, func(p string) (string, error) { return s.path(p, true) })
 			if err != nil {
 				return nil, nil, err
 			}
@@ -594,7 +600,7 @@ type valueIn struct {
 }
 
 func (v valueIn) opts() ops.ValueOptions {
-	return ops.ValueOptions{ELF: v.ELF, Type: symbols.Scalar(v.Type), Len: v.Len}
+	return ops.ValueOptions{ELF: v.ELF, Type: symbols.Scalar(v.Type), Len: v.Len, MaxSize: maxValue}
 }
 
 type waitIn struct {
@@ -653,7 +659,8 @@ func (s *Server) scriptingTools() {
 		return out, nil
 	})
 	add(s, Spec{"azahar_read_symbol", "read-symbol"}, &mcp.Tool{
-		Description: "Read a variable (or address) and decode it by its C type: numbers, bools, enums by name, plain char arrays as text, structs and arrays as JSON. " + targetHelp,
+		Description: "Read a variable (or address) and decode it by its C type: numbers, bools, enums by name, plain char arrays as text, structs and arrays as JSON. " +
+			"Values over 16 KiB are refused: read a field or element. " + targetHelp,
 		Annotations: readOnly("Read variable"),
 	}, 30*time.Second, func(ctx context.Context, in valueIn) (any, error) {
 		if err := s.paths(&in.ELF); err != nil {
@@ -709,7 +716,7 @@ func (s *Server) scriptingTools() {
 		if err != nil {
 			return nil, err
 		}
-		rep, err := sequence.Run(ctx, s.ops, s.name(in.common), f, sequence.Options{Dir: dir, ELF: in.ELF, RestrictPaths: true})
+		rep, err := sequence.Run(ctx, s.ops, s.name(in.common), f, sequence.Options{Dir: dir, ELF: in.ELF, RestrictPaths: true, CheckPath: s.path})
 		if rep == nil {
 			return nil, err
 		}

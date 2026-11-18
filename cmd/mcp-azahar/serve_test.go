@@ -40,9 +40,15 @@ func TestServeStdio(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { // reap the child if the test ends early
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	send := func(s string) {
 		if _, err := io.WriteString(stdin, s+"\n"); err != nil {
-			t.Fatal(err)
+			t.Fatalf("serve exited early (stdin closed): %v", err)
 		}
 	}
 	send(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`)

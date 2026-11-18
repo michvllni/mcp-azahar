@@ -39,8 +39,30 @@ func TestPathsStayInAllowedDirs(t *testing.T) {
 			t.Errorf("%s: %v %q", name, res.IsError, text)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(outside, "shot.png")); err == nil {
-		t.Fatal("a screenshot was written outside")
+	// Routes the re-review found: a dangling link as the file itself, the
+	// split file names, and links inside a sequence's paths.
+	_ = os.Symlink(filepath.Join(outside, "dangling.png"), filepath.Join(dir, "d.png"))
+	_ = os.Symlink(filepath.Join(outside, "top.png"), filepath.Join(dir, "s-top.png"))
+	_ = os.WriteFile(filepath.Join(outside, "app.elf"), mustRead(t, testELF), 0o600)
+	for name, tc := range map[string]struct {
+		tool string
+		args map[string]any
+	}{
+		"dangling link output": {"azahar_screenshot", map[string]any{"output": "d.png"}},
+		"split name link":      {"azahar_screenshot", map[string]any{"output": "s.png", "screen": "both", "split": true}},
+		"sequence output link": {"azahar_sequence", map[string]any{"script": "steps:\n  - screenshot: {screen: top, output: escape/seq.png}\n"}},
+		"sequence elf link":    {"azahar_sequence", map[string]any{"script": "elf: escape/app.elf\nsteps:\n  - assert: {target: counter, value: 0}\n"}},
+		"sequence split link":  {"azahar_sequence", map[string]any{"script": "steps:\n  - screenshot: {screen: both, split: true, output: s.png}\n"}},
+	} {
+		res, text := call(t, cs, tc.tool, tc.args)
+		if refused := strings.Contains(text, "outside the directories") || strings.Contains(text, "symlink to a missing file"); !res.IsError || !refused {
+			t.Errorf("%s: %v %q", name, res.IsError, text)
+		}
+	}
+	for _, f := range []string{"shot.png", "dangling.png", "top.png", "seq.png"} {
+		if _, err := os.Stat(filepath.Join(outside, f)); err == nil {
+			t.Fatalf("%s was written outside", f)
+		}
 	}
 
 	// Inside the allowed directory, relative paths work.
@@ -78,8 +100,27 @@ func TestPathsStayInAllowedDirs(t *testing.T) {
 	}
 }
 
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestResultLimits(t *testing.T) {
 	cs, _, _ := connect(t)
+	for tool, extra := range map[string]map[string]any{"azahar_read_symbol": {}, "azahar_wait_for": {"value": "00"}} {
+		args := map[string]any{"target": "0x00100000", "type": "bytes", "len": 1 << 20}
+		for k, v := range extra {
+			args[k] = v
+		}
+		res, text := call(t, cs, tool, args)
+		if !res.IsError || !strings.Contains(text, "over 16384") {
+			t.Fatalf("%s with a huge len: %.200s", tool, text)
+		}
+	}
 	res, text := call(t, cs, "azahar_read_memory", map[string]any{"address": "0x00100000", "length": 5000})
 	if !res.IsError || !strings.Contains(text, "4096") {
 		t.Fatalf("big read: %s", text)

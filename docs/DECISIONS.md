@@ -264,6 +264,37 @@ all built by the release workflow (PLAN.md Phase 8):
 **Revisit if:** users ask for other channels, or goreleaser supports MCPB
 (then a registry entry pointing at our release binaries becomes cheap).
 
+## D11 — MCP tools only touch files in allowed directories
+**Decision (maintainer, 2026-11-18):** Every file path an MCP tool takes
+(app, ELF, attach log, sequence file, screenshot output, and the paths
+inside a sequence, including split screenshot names) must resolve, with
+symlinks followed, into the server's working directory or a directory
+given with `serve --allow-dir` (repeatable). A dangling symlink as a write
+target is refused. Relative paths are relative to the first allowed
+directory. Tool results are bounded so they fit a model's context.
+
+**Why:**
+- The model's arguments are untrusted: text on the emulated screen, in
+  the log or in a repository can steer it (prompt injection). Without a
+  policy, `attach` with any file as its `log` plus `azahar_logs` read any
+  text file, and `screenshot.output` overwrote any file (PR #15 review).
+- MCP clients may auto-approve tools, so the server cannot rely on the
+  user seeing each call.
+- The CLI keeps full access: a human typing a path is trusted.
+
+**Consequences:**
+- Sessions created by the CLI may carry ELF and log paths outside the
+  allowed directories; tools use them (the human chose them).
+- Results are capped: memory reads 4 KiB, values 16 KiB, logs 200 lines
+  by default (at most 1000), symbol lists 500 entries, screenshot scale 4.
+- The container image (D10) runs `serve` in its working directory: mount
+  the project there or pass `--allow-dir`.
+- Another local process could swap a checked path for a link before the
+  write (TOCTOU); out of scope for a local tool.
+
+**Revisit if:** clients need to work across directories routinely (then
+consider MCP roots from the client instead of a flag).
+
 ## Known unknowns (resolved in Phase 1)
 All answered in `docs/PROTOCOL.md`:
 - RPC wire format, payload limits and transport: §2–§5.

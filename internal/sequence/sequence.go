@@ -350,6 +350,10 @@ type Options struct {
 	// absolute or lead out of Dir (for callers like an MCP server that must
 	// not let a sequence touch arbitrary files).
 	RestrictPaths bool
+	// CheckPath, if set, vets every file the run reads (write false) or
+	// writes (write true), after RestrictPaths, and returns the path to
+	// use; the MCP server passes its allowed-directory policy here.
+	CheckPath func(path string, write bool) (string, error)
 }
 
 // Run executes the steps against a session. It returns the report and, if
@@ -361,10 +365,10 @@ func Run(ctx context.Context, o *ops.Ops, session string, f *File, opt Options) 
 			return nil, stepError(i, err)
 		}
 	}
-	r := &runner{o: o, session: session, dir: opt.Dir, restrict: opt.RestrictPaths}
+	r := &runner{o: o, session: session, dir: opt.Dir, restrict: opt.RestrictPaths, check: opt.CheckPath}
 	r.elf = opt.ELF
 	if r.elf == "" && f.ELF != "" {
-		p, err := r.path(f.ELF)
+		p, err := r.path(f.ELF, false)
 		if err != nil {
 			return nil, err
 		}
@@ -427,6 +431,7 @@ type runner struct {
 	session  string
 	dir, elf string
 	restrict bool
+	check    func(string, bool) (string, error)
 	logOff   int64 // where the next log_contains starts searching
 }
 
@@ -450,7 +455,7 @@ func (r *runner) precheck(f *File) error {
 			}
 		}
 		if st.Screenshot != nil {
-			if _, err := r.path(st.Screenshot.Output); err != nil {
+			if _, err := r.path(st.Screenshot.Output, true); err != nil {
 				return stepError(i, err)
 			}
 		}
@@ -459,16 +464,27 @@ func (r *runner) precheck(f *File) error {
 }
 
 // path resolves a file path of the sequence relative to its directory.
-func (r *runner) path(p string) (string, error) {
+func (r *runner) path(p string, write bool) (string, error) {
 	if r.restrict {
 		if filepath.IsAbs(p) || !filepath.IsLocal(p) {
 			return "", fmt.Errorf("%w: path %q must be relative and stay inside the sequence's directory", ops.ErrUsage, p)
 		}
 	}
-	if filepath.IsAbs(p) || r.dir == "" {
-		return p, nil
+	if !filepath.IsAbs(p) && r.dir != "" {
+		p = filepath.Join(r.dir, p)
 	}
-	return filepath.Join(r.dir, p), nil
+	if r.check != nil {
+		return r.check(p, write)
+	}
+	return p, nil
+}
+
+// writeCheck is the check for SaveScreenshot's file names, or nil.
+func (r *runner) writeCheck() func(string) (string, error) {
+	if r.check == nil {
+		return nil
+	}
+	return func(p string) (string, error) { return r.check(p, true) }
 }
 
 func (r *runner) step(ctx context.Context, st *Step, action string) (any, error) {
@@ -513,7 +529,7 @@ func (r *runner) step(ctx context.Context, st *Step, action string) (any, error)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ops.ErrUsage, err)
 		}
-		out, err := r.path(s.Output)
+		out, err := r.path(s.Output, true)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +537,7 @@ func (r *runner) step(ctx context.Context, st *Step, action string) (any, error)
 		if err != nil {
 			return nil, err
 		}
-		return ops.SaveScreenshot(shots, out, s.Split)
+		return ops.SaveScreenshot(shots, out, s.Split, r.writeCheck())
 	case "write":
 		addr, err := ops.ParseAddress(st.Write.Address)
 		if err != nil {
