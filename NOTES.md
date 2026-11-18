@@ -22,8 +22,11 @@ at the top of each section.
   status, sessions, version, press, hold, release, touch, circle-pad,
   screenshot, read, write, state, logs): done, reviewed (PR #12, two
   rounds); end-to-end run against Azahar passed.
-- Phase 5b (symbols, read-symbol, wait-for, sequence): implemented; live
-  run against Azahar passed. Next: Phase 6 (MCP server).
+- Phase 5b (symbols, read-symbol, wait-for, sequence): done, reviewed
+  (PR #14, two rounds); live run against Azahar passed.
+- Phase 6 (MCP server, `internal/server`, `serve`): implemented; stdio
+  smoke test against Azahar passed. Next: Phase 7 (fixture + integration
+  tests).
 
 ## Blockers
 
@@ -83,6 +86,25 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 6
+- Official Go SDK `github.com/modelcontextprotocol/go-sdk` v1.8.0 (latest
+  stable on 2026-11-18; v1.9.0-pre.1 exists). Tools use the typed
+  `mcp.AddTool` with `Out=any`: input schemas come from the Go structs
+  (`jsonschema` tags are descriptions; fields without `omitempty` are
+  required), errors become tool errors (`isError`), results are compact
+  JSON text. No output schemas: values like `read_symbol` are dynamic.
+- 20 tools, one per CLI leaf command except `version` (the handshake
+  reports it) and `serve`. `cmd/mcp-azahar/parity_test.go` fails if a CLI
+  command lacks a tool or a tool names no CLI command.
+- Differences from the CLI, on purpose: durations in milliseconds;
+  `azahar_status` reports a non-running session instead of failing;
+  `azahar_logs` has no follow (use `from`); `azahar_sequence` takes inline
+  scripts and always restricts paths; a failed wait or sequence returns
+  its report inside the error text.
+- Live smoke (2127.0-rc3, `serve` over stdio driven by a JSON-RPC script):
+  initialize, tools/list (20), launch, status, read_symbol, screenshot
+  (one 400x480 PNG for both), a save/load/press sequence and stop passed.
+
 ### Phase 5b
 - `internal/symbols` reads ELF symbols (object/func) and DWARF variable
   types with Go's `debug/elf` and `debug/dwarf`. Expressions are a name

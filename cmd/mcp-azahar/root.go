@@ -147,6 +147,7 @@ emulator not running.`,
 	root.AddCommand(screenshotCommand(a), stateCommand(a), logsCommand(a))
 	root.AddCommand(memoryCommands(a)...)
 	root.AddCommand(scriptingCommands(a)...)
+	root.AddCommand(serveCommand(a))
 	for _, c := range root.Commands() {
 		wrapArgs(c)
 	}

@@ -116,6 +116,38 @@ lt, le, gt, ge, and `changed` (no value) for `wait_for`; enums compare by name
 or number. `log_contains` only matches lines logged after the run started, and
 each match moves past its line.
 
+## MCP server
+`mcp-azahar serve` speaks the Model Context Protocol over stdio. Configure your
+MCP client, e.g.:
+
+```json
+{"mcpServers": {"azahar": {"command": "mcp-azahar", "args": ["serve"]}}}
+```
+
+Every tool mirrors a CLI command and calls the same code, so an agent and a
+human with the CLI share sessions (`--session` or `$MCP_AZAHAR_SESSION` sets
+the default session; each tool also takes `session`):
+
+| Tool | CLI | Tool | CLI |
+|---|---|---|---|
+| `azahar_launch` | `launch` | `azahar_screenshot` (PNG image content) | `screenshot` |
+| `azahar_attach` | `attach` | `azahar_save_state` | `state save` |
+| `azahar_stop` | `stop` | `azahar_load_state` | `state load` |
+| `azahar_status` | `status` | `azahar_read_memory` | `read` |
+| `azahar_sessions` | `sessions` | `azahar_write_memory` | `write` |
+| `azahar_press` | `press` | `azahar_logs` | `logs` |
+| `azahar_hold` | `hold` | `azahar_symbols` | `symbols` |
+| `azahar_release` | `release` | `azahar_read_symbol` | `read-symbol` |
+| `azahar_touch` | `touch` | `azahar_wait_for` | `wait-for` |
+| `azahar_circle_pad` | `circle-pad` | `azahar_sequence` | `sequence` |
+
+Durations are in milliseconds (`for_ms`, `timeout_ms`). Errors come back as
+tool errors whose text starts with their kind: `invalid arguments`, `check
+failed` (an assert or wait that did not hold), or `no running session`.
+`azahar_sequence` takes a `file` or an inline `script`; its file paths must be
+relative and stay inside the sequence's directory (the server's working
+directory for scripts). `azahar_screenshot` can also save the PNG (`output`).
+
 ## Development
 The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)
 with Go, Xvfb, Mesa software rendering, Azahar extracted to `/opt/azahar`,
