@@ -355,10 +355,15 @@ func TestFollowLogsSkipsPartialStartAndEndsWithSession(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	for _, l := range f.got() {
-		if strings.Contains(l, "half") || l == "old" {
-			t.Fatalf("emitted a line from before the start: %q", f.got())
+		// "old" is from before the start; " rest" would be a fragment. The
+		// unfinished line may be emitted whole once it is complete.
+		if l == "old" || strings.HasPrefix(l, " rest") || l == "half-written" {
+			t.Fatalf("emitted a line from before the start or a fragment: %q", f.got())
 		}
 	}
+	// Lines written right before the end are not lost, nor an unfinished
+	// last line.
+	appendFile(t, logFile, "last\nno newline")
 	// Stopping the session ends the follow without cancelling ctx.
 	if err := o.Stop(context.Background(), "t", false); err != nil {
 		t.Fatal(err)
@@ -370,6 +375,32 @@ func TestFollowLogsSkipsPartialStartAndEndsWithSession(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("follow did not end after the session was stopped")
+	}
+	got := f.got()
+	if len(got) < 2 || got[len(got)-2] != "last" || got[len(got)-1] != "no newline" {
+		t.Fatalf("final read missing: %q", got)
+	}
+}
+
+func TestFollowLogsRecreatedFile(t *testing.T) {
+	o, _ := setup(t)
+	logFile := setLog(t, o, "a fairly long first line of the old log\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := startFollow(ctx, o, ops.LogQuery{})
+	time.Sleep(300 * time.Millisecond) // let it take its start offset
+	// Azahar restarts: a new file that is already longer than the old one.
+	tmp := logFile + ".new"
+	_ = os.WriteFile(tmp, []byte("new 1\nnew 2 with enough text to pass the old offset\n"), 0o600)
+	if err := os.Rename(tmp, logFile); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.got()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := f.got(); len(got) < 2 || got[0] != "new 1" {
+		t.Fatalf("recreated log not followed from its start: %q", got)
 	}
 }
 
@@ -399,16 +430,22 @@ func TestPressRestoresAfterLostReply(t *testing.T) {
 	}
 }
 
-func TestHoldDuringPressIsKept(t *testing.T) {
+func TestHoldFromAnotherProcessDuringPressIsKept(t *testing.T) {
 	o, srv := setup(t)
+	// A second Ops on the same store stands for another CLI process: no
+	// shared in-process locks, only the session file.
+	other := &ops.Ops{M: o.M}
 	ctx := context.Background()
 	if _, err := o.Hold(ctx, "t", btn(t, "L")); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := o.Press(ctx, "t", btn(t, "A"), 200*time.Millisecond); done <- err }()
-	time.Sleep(50 * time.Millisecond)
-	if _, err := o.Hold(ctx, "t", btn(t, "B")); err != nil {
+	go func() { _, err := o.Press(ctx, "t", btn(t, "A"), 300*time.Millisecond); done <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.Input().Buttons&rpc.ButtonA == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if _, err := other.Hold(ctx, "t", btn(t, "B")); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -417,6 +454,27 @@ func TestHoldDuringPressIsKept(t *testing.T) {
 	s, _ := o.M.Store.Load("t")
 	if got := srv.Input(); got.Buttons != rpc.ButtonL|rpc.ButtonB || s.Held.Buttons != got.Buttons {
 		t.Fatalf("Azahar %v, session %v, want L+B in both", got.Buttons.Names(), s.Held.Buttons.Names())
+	}
+}
+
+func TestStopDuringPressReleases(t *testing.T) {
+	o, srv := setup(t)
+	other := &ops.Ops{M: o.M}
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { _, err := o.Press(ctx, "t", btn(t, "A"), 300*time.Millisecond); done <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.Input().Buttons&rpc.ButtonA == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if err := other.Stop(ctx, "t", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("press after stop: %v", err)
+	}
+	if got := srv.Input(); !got.IsZero() {
+		t.Fatalf("Azahar still holds %v after the session was stopped", got.Buttons.Names())
 	}
 }
 

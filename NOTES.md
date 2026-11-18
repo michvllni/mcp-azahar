@@ -109,12 +109,22 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   status afterwards exit 4, no process left.
 - Verified writes cannot detect a write of bytes equal to the current
   content (e.g. zeros to unmapped memory); documented in `write --help`.
+- If a press cannot re-read the session file at its end (stopped
+  meanwhile, store lock unavailable), it still restores: the input it
+  started from, or nothing if the session is gone.
+- Known limitation: input changes run their SetInput while holding the
+  store's flock, so an unresponsive emulator can delay other session
+  commands by up to the RPC timeout (about 8 s). Acceptable with one
+  emulator per host (D9).
 - Logs: `ops.Logs` takes a byte offset (`From`) and returns the next one,
   only complete lines (an unfinished line waits for the next call),
-  restarting at 0 when the file shrank. `FollowLogs` builds on it, starts
-  after the last complete line (or with the last `--tail` lines), and ends
-  when the session is stopped or its emulator exits. The MCP server can use
-  the offset as a cursor.
+  restarting at 0 when the file shrank (`logs --json` prints it, `--from`
+  takes it). `FollowLogs` builds on it: it starts after the last complete
+  line, or with the last `--tail` lines (a line still being written is
+  emitted whole once complete), follows a recreated file from its start
+  (file identity), and ends when the session is stopped or, for launched
+  sessions, the emulator exits, after a final read that also emits an
+  unfinished last line. The MCP server can use the offset as a cursor.
 - Addresses and lengths are hex with `0x` or decimal, never octal; `write`
   bytes are in memory order and every group needs an even number of hex
   digits.

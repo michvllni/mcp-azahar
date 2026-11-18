@@ -83,7 +83,7 @@ func (o *Ops) Press(ctx context.Context, name string, in rpc.Input, d time.Durat
 	}
 	// Restore in every case: a request whose reply was lost may still have
 	// pressed the buttons in Azahar.
-	held, restoreErr := o.applyHeld(ctx, name, c)
+	held, restoreErr := o.applyHeld(ctx, name, c, s.Held)
 	if err := errors.Join(pressErr, restoreErr); err != nil {
 		return nil, err
 	}
@@ -91,16 +91,26 @@ func (o *Ops) Press(ctx context.Context, name string, in rpc.Input, d time.Durat
 }
 
 // applyHeld sends the session's current held input to Azahar, under the
-// store lock, even if ctx has ended.
-func (o *Ops) applyHeld(ctx context.Context, name string, c *rpc.Client) (rpc.Input, error) {
+// store lock, even if ctx has ended. If the session file cannot be used
+// (stopped meanwhile, lock not available), it still sends fallback, or
+// releases everything if the session is gone, so no press stays stuck.
+func (o *Ops) applyHeld(ctx context.Context, name string, c *rpc.Client, fallback rpc.Input) (rpc.Input, error) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
 	defer cancel()
 	var held rpc.Input
+	sent := false
 	_, err := o.M.Update(rctx, name, func(s *session.Session) error {
-		held = s.Held
+		held, sent = s.Held, true
 		return c.SetInput(rctx, held)
 	})
-	return held, err
+	if err == nil || sent {
+		return held, err
+	}
+	held = fallback
+	if errors.Is(err, session.ErrNotFound) {
+		held = rpc.Input{}
+	}
+	return held, errors.Join(err, c.SetInput(rctx, held))
 }
 
 // Hold adds in to the held input until Release.

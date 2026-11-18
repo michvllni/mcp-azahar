@@ -40,7 +40,7 @@ mcp-azahar screenshot --screen both -o shot.png
 mcp-azahar read 0x00100000 16 --format dump
 mcp-azahar write 0x00101000 'de ad be ef'   # verified by reading back
 mcp-azahar state save 1; mcp-azahar state load 1
-mcp-azahar logs --tail 20 --contains Error
+mcp-azahar logs --tail 20 --contains Error   # -f to follow, --from <offset> to resume
 mcp-azahar stop
 ```
 - **Sessions:** every command acts on a session: `--session NAME`, or

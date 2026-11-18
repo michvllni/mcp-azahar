@@ -106,6 +106,6 @@ func (o *Ops) LoadState(ctx context.Context, name string, slot int) error {
 	}
 	l.input.Lock()
 	defer l.input.Unlock()
-	_, err = o.applyHeld(ctx, name, c)
+	_, err = o.applyHeld(ctx, name, c, s.Held)
 	return err
 }

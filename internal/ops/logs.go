@@ -17,7 +17,9 @@ import (
 type LogQuery struct {
 	// From is the byte offset to start at (0: beginning). Pass the Offset
 	// of a previous result to get only newer lines. If the file is now
-	// shorter (Azahar restarted), reading starts over at 0.
+	// shorter (Azahar restarted), reading starts over at 0; a log that was
+	// recreated and has already grown past From is not detected here
+	// (FollowLogs detects it by file identity).
 	From int64
 	// Tail keeps only the last N matching lines (0: all).
 	Tail int
@@ -102,9 +104,12 @@ func readLog(ctx context.Context, path string, q LogQuery) (*LogResult, error) {
 }
 
 // FollowLogs calls emit for matching lines as they are appended, starting
-// with the last q.Tail lines (none if 0), like `tail -f`. It handles
-// truncation (Azahar restarted) and ends when ctx ends or the session is
-// stopped or its emulator exits.
+// with the last q.Tail lines (none if 0), like `tail -f`. A line that is
+// still being written when it starts is emitted whole once it is complete;
+// fragments are never emitted. It follows a log that is truncated or
+// recreated (Azahar restarted) from its beginning. It ends when ctx ends,
+// when the session is stopped, or, for launched sessions, when the
+// emulator exits (attached sessions: ctx or stop only), after a final read.
 func (o *Ops) FollowLogs(ctx context.Context, name string, q LogQuery, emit func(string) error) error {
 	if q.Tail < 0 {
 		return usage("tail must not be negative")
@@ -128,17 +133,22 @@ func (o *Ops) FollowLogs(ctx context.Context, name string, q LogQuery, emit func
 	} else if off, err = completeLinesEnd(p); err != nil {
 		return err
 	}
-	lastCheck := time.Now()
-	for {
-		res, err := readLog(ctx, p, LogQuery{From: off, Contains: q.Contains})
+	prev, _ := os.Stat(p)
+	// poll reads new complete lines; final also emits an unfinished last
+	// line, since nothing will complete it any more.
+	poll := func(final bool) error {
+		if cur, err := os.Stat(p); err == nil {
+			if prev != nil && !os.SameFile(prev, cur) {
+				off = 0 // recreated
+			}
+			prev = cur
+		}
+		res, err := readLog(context.WithoutCancel(ctx), p, LogQuery{From: off, Contains: q.Contains})
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			res = &LogResult{Offset: off} // removed: the session check below ends us
+			return err
 		}
 		for _, l := range res.Lines {
 			if err := emit(l); err != nil {
@@ -146,11 +156,22 @@ func (o *Ops) FollowLogs(ctx context.Context, name string, q LogQuery, emit func
 			}
 		}
 		off = res.Offset
+		if final {
+			if rest := unfinishedLine(p, off); rest != "" && (q.Contains == "" || strings.Contains(rest, q.Contains)) {
+				return emit(rest)
+			}
+		}
+		return nil
+	}
+	lastCheck := time.Now()
+	for {
+		if err := poll(false); err != nil {
+			return err
+		}
 		if time.Since(lastCheck) >= time.Second {
 			lastCheck = time.Now()
-			s, err := o.M.Store.Load(name)
-			if err != nil || !s.Running() {
-				return nil
+			if s, err := o.M.Store.Load(name); err != nil || !s.Running() {
+				return poll(true)
 			}
 		}
 		select {
@@ -159,6 +180,18 @@ func (o *Ops) FollowLogs(ctx context.Context, name string, q LogQuery, emit func
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// unfinishedLine returns the text after off (a line without newline).
+func unfinishedLine(path string, off int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	b := make([]byte, 64*1024)
+	n, _ := f.ReadAt(b, off)
+	return strings.TrimRight(string(b[:n]), "\r\n")
 }
 
 // completeLinesEnd returns the offset after the last complete line, so a

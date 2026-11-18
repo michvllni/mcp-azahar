@@ -401,8 +401,9 @@ func logsCommand(a *app) *cobra.Command {
 		Short: "Show Azahar's log for the session",
 		Long: `Print Azahar's log (filtered with --contains, last lines with --tail). --follow
 prints the last --tail lines (none by default) and then new lines until
-interrupted, --timeout, or the session's emulator stops; with --json it prints
-one {"line": ...} object per line.`,
+interrupted, --timeout, stop, or (launched sessions) the emulator exiting; with
+--json it prints one compact {"line": ...} object per line (NDJSON). Without
+--follow, --json prints the lines and the byte offset to pass to --from next.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := a.open()
@@ -436,6 +437,7 @@ one {"line": ...} object per line.`,
 		},
 	}
 	c.Flags().IntVar(&q.Tail, "tail", 0, "only the last N matching lines")
+	c.Flags().Int64Var(&q.From, "from", 0, "start at this byte offset (the offset printed by a previous --json call)")
 	c.Flags().StringVar(&q.Contains, "contains", "", "only lines containing this text")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep printing new lines")
 	return c
