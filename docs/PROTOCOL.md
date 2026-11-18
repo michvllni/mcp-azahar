@@ -374,7 +374,8 @@ SIGKILL.
 `unshare --user --map-root-user --net` (loopback brought up inside), ran in
 parallel. Each had its own `127.0.0.1:45987` and they shared one Xvfb
 display. Nothing was bound on the host. A client must run inside the same
-namespace, or reach it through a relay (Phase 3 design).
+namespace, or reach it through a relay (DECISIONS.md D9 option A, in
+reserve; not built).
 
 *To verify:* Ubuntu 24.04 (GitHub runners) restricts unprivileged user
 namespaces through AppArmor by default.

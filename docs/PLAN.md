@@ -111,11 +111,13 @@ on the caller.
   detached, with an isolated user dir/config per session (RPC enabled,
   single-screen layout; see `docs/PROTOCOL.md` §7 for the seed config).
   Azahar's RPC port is fixed (45987, all interfaces), so per DECISIONS.md
-  D9 `launch` refuses to start while that port is in use, naming the
-  session (or "another process") that holds it. `launch` waits until RPC
-  answers, then writes a session file:
-  `$XDG_STATE_HOME/mcp-azahar/sessions/<name>.json` (PIDs, display, RPC
-  endpoint (address + transport), user dir, log path, app path, ELF path).
+  D9 `launch` holds a host-wide launch lock, refuses to start while that
+  port is in use (naming the session, on Linux the process from `/proc`,
+  else "another process"), and verifies that the RPC server that answers
+  belongs to the Azahar it started. It waits until RPC answers, then writes
+  a session file: `$XDG_STATE_HOME/mcp-azahar/sessions/<name>.json` (PIDs,
+  display, RPC endpoint `{"network": "udp", "address": "127.0.0.1:45987"}`,
+  user dir, log path, app path, ELF path).
 - Every other command attaches via the session file. Named sessions via
   `--session <name>` (default `default`); with Azahar 2127 only one of them
   can have a running Azahar at a time (D9).

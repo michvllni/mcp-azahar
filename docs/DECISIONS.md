@@ -160,10 +160,11 @@ network namespaces stay in reserve.
 were weighed:
 - **A, network namespace per session** (unprivileged
   `unshare --user --net`, with a relay over a Unix socket): parallel
-  sessions and RPC kept off the network, proven feasible in Phase 1. But
-  it is Linux-only, needs unprivileged user namespaces (often restricted:
-  Ubuntu 24.04 AppArmor, Docker seccomp; unverified for GitHub runners),
-  and adds a relay process to supervise.
+  sessions and RPC kept off the network. Phase 1 observed two instances
+  isolated this way; the relay was not built or tested. It is Linux-only,
+  needs unprivileged user namespaces (often restricted, e.g. by Ubuntu
+  24.04's AppArmor defaults; unverified for GitHub runners and Docker's
+  default seccomp profile), and adds a relay process to supervise.
 - **B, one session per host:** simple, works anywhere Azahar runs; parallel
   runs use separate containers or VMs, as CI matrix jobs already do.
 - **C, upstream setting:** solves both problems for everyone, on every OS,
@@ -174,12 +175,24 @@ only worth it if parallel sessions on one host are needed before C lands.
 
 **Consequences:**
 - `launch` refuses to start a second RPC-enabled Azahar while port 45987 is
-  in use (by a session or anything else) and says why. Named sessions
-  (`--session`) stay, so nothing in the CLI changes when parallel sessions
-  become possible.
-- The session file stores an RPC endpoint (address and transport), not an
-  assumed port, so a configurable port (C) or a relay (A) plugs in without
-  a format change. The RPC client already takes a pluggable `Dialer`.
+  in use and says why: it names the session if a session file holds the
+  port, on Linux the process found through `/proc/net/udp`, otherwise
+  "another process". Named sessions (`--session`) stay, so nothing in the
+  CLI changes when parallel sessions become possible.
+- Port checks race: Azahar binds the port only at the end of loading an
+  app, and a second Azahar that cannot bind keeps running without RPC
+  (`server.cpp:18-22` only logs `Error starting UDP server`). So `launch`
+  holds a host-wide lock (a lock file under `$XDG_STATE_HOME/mcp-azahar/`)
+  from the port check until the session file is written, and verifies that
+  the RPC server that answers belongs to the Azahar it started: on Linux
+  the socket's owner via `/proc`, everywhere no `Error starting UDP
+  server` in its log. Otherwise `launch` stops its Azahar and fails.
+- The session file stores the RPC endpoint in `net.Dial` terms, not an
+  assumed port: `"rpc": {"network": "udp", "address": "127.0.0.1:45987"}`.
+  Clients dial `127.0.0.1` (Azahar binds `0.0.0.0`). A configurable port
+  (C) changes only the address; a relay (A) would use
+  `"network": "unixgram"` with a socket path. The Phase 2 RPC client
+  (`internal/rpc`) takes a pluggable `Dialer` for this.
 - While a session runs, its RPC server is reachable from the network.
   README and SECURITY.md say so and recommend a firewall or isolated
   container.
