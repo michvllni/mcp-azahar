@@ -24,9 +24,10 @@ at the top of each section.
   rounds); end-to-end run against Azahar passed.
 - Phase 5b (symbols, read-symbol, wait-for, sequence): done, reviewed
   (PR #14, two rounds); live run against Azahar passed.
-- Phase 6 (MCP server, `internal/server`, `serve`): implemented; stdio
-  smoke test against Azahar passed. Next: Phase 7 (fixture + integration
-  tests).
+- Phase 6 (MCP server, `internal/server`, `serve`): done, reviewed (PR
+  #15, two rounds); stdio smoke test against Azahar passed.
+- Phase 7 (fixture + integration tests): implemented; fixture built in
+  CI, `TestFixture` passed against Azahar 2127.0-rc3 here (3 runs).
 
 ## Blockers
 
@@ -86,6 +87,32 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 7
+- The fixture (`testdata/fixture/main.c`) builds in CI with
+  `devkitpro/devkitarm:20260610` (pinned by digest); locally the artifact
+  is fetched with `gh run download`. No container runtime in the Coder
+  workspace, and devkitPro's servers still answer 403.
+- Live finding: Azahar's log file is buffered and flushed only on
+  Error-level entries, and app `svcOutputDebugString` output is Debug
+  level (dropped by the default `*:Info`). The seed config now sets
+  `instant_debug_log=true` and `log_filter=*:Info Debug.Emulated:Debug`
+  (PROTOCOL.md §7). Without them `log_contains` could not see app lines.
+  Trade-off (review of #16): every entry is then flushed on the logging
+  thread, slower for log-heavy apps, and Azahar stops file logging at
+  100 MiB. Kept on by default: live logs are what `logs`, `log_contains`
+  and the MCP log tool exist for; revisit with an opt-out flag if an app
+  logs heavily.
+- In the Coder workspace (glibc older than trixie) `/opt/azahar/AppRun`
+  fails (`checkrt: GLIBC_2.38 not found`); use the patched
+  `AZAHAR_BIN=/opt/azahar/usr/bin/azahar` there. CI and the trixie dev
+  container use `AppRun`.
+- The integration test runs the real CLI binary (the test binary with
+  `MCPAZ_TEST_MAIN=1`) and checks screenshot pixels: the fixture's
+  colour bars and the touch marker come through the RPC screenshot
+  exactly (within ±24 per channel).
+- CI integration job: `debian:trixie` container (pinned digest) with the
+  Dockerfile's apt packages and `install-azahar.sh`.
+
 ### Phase 6
 - Official Go SDK `github.com/modelcontextprotocol/go-sdk` v1.8.0 (latest
   stable on 2026-11-18; v1.9.0-pre.1 exists). Tools use the typed

@@ -57,6 +57,10 @@ mcp-azahar stop
   bounds a command; `logs -f` also ends when the session's emulator stops.
 - **Exit codes:** 0 ok, 1 error, 2 usage error, 3 check failed, 4 no such
   session or emulator not running.
+- **App output:** text your homebrew passes to `svcOutputDebugString` shows
+  up in `logs` (launched sessions enable it; for attach, set
+  `[Debugging] instant_debug_log=true` and
+  `[Miscellaneous] log_filter=*:Info Debug.Emulated:Debug` in Azahar's config).
 - **State files:** they live in `$MCP_AZAHAR_STATE_DIR`, else
   `$XDG_STATE_HOME/mcp-azahar`. A session's directory keeps Azahar's portable
   user dir (config, log, save states).
@@ -172,8 +176,17 @@ golangci-lint run ./...
 go run ./cmd/mcp-azahar version
 ```
 
-CI (`.github/workflows/ci.yml`) runs tests, linters and a cross-platform
-snapshot build on every pull request; [AGENTS.md](AGENTS.md#build-test-lint)
+Integration tests run the CLI against the real Azahar with a small test
+homebrew, `testdata/fixture` (libctru; `build.sh` needs devkitPro, CI builds it
+in the `devkitpro/devkitarm` image). `testdata/fixture/smoke.yaml` is a
+complete example sequence. With the fixture in `build/`:
+
+```sh
+MCPAZ_FIXTURE_DIR=$PWD/build go test -tags integration -run TestFixture -v ./cmd/mcp-azahar/
+```
+
+CI (`.github/workflows/ci.yml`) runs tests, linters, a cross-platform snapshot
+build and the integration tests on every pull request; [AGENTS.md](AGENTS.md#build-test-lint)
 lists the same checks for running locally. Dependencies, actions and tool
 versions are kept current by [Renovate](https://docs.renovatebot.com/)
 (`.github/renovate.json5`).

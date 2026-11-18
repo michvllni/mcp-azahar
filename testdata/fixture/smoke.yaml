@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Reference sequence: runs green against the fixture (testdata/fixture).
+#   mcp-azahar launch build/fixture.3dsx --elf build/fixture.elf
+#   mcp-azahar sequence testdata/fixture/smoke.yaml
+name: fixture smoke test
+steps:
+  - name: app is running
+    wait_for: {target: test_state.mode, value: MODE_RUN, timeout: 10s}
+  - assert: {target: test_state.magic, value: 0x58494654}
+  - name: frames advance
+    wait_for: {target: test_state.frame, op: changed, timeout: 5s}
+  - press: A
+    for: 200ms
+  - name: A was seen (KEY_A = 1)
+    wait_for: {target: test_state.last_buttons, value: 1, timeout: 5s}
+  - touch: {x: 100, y: 50, for: 200ms}
+  - wait_for: {target: test_state.touch_x, value: 100, timeout: 5s}
+  - assert: {target: test_state.touch_y, value: 50}
+  - screenshot: {screen: both, output: smoke.png}
+  - log_contains: {text: "fixture: touch 100 50", timeout: 5s}
