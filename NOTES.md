@@ -5,38 +5,25 @@ at the top of each section.
 
 ## Status
 - Phase 0 (tooling and skeleton): done except devkitPro (see "Blockers").
-  The Dockerfile now uses Debian trixie; the running workspace is still on
-  bookworm and runs Azahar through a stopgap patch until it is rebuilt.
-  Next: maintainer rebuilds the container (and updates the Coder template if
-  it does not build from `.devcontainer/`), then Phase 1.
+  The dev container runs Debian trixie (maintainer: assume trixie from now
+  on). Next: Phase 1.
 
 ## Blockers
 
-### Resolved: Azahar AppImage does not run on Debian bookworm
-- Azahar 2127.0-rc3 needs `GLIBC_2.38`/`GLIBC_2.39` (bookworm: 2.36) and a
-  newer HarfBuzz than bookworm's 6.0 (bundled pango:
-  `undefined symbol: hb_ot_color_has_paint`). libstdc++ is no problem, the
-  bundle ships one in `checkrt/`.
-- Decision (maintainer, 2026-11-18): base image →
+### Resolved: Azahar 2127 needs Debian trixie
+- Azahar 2127.0-rc3 needs `GLIBC_2.38`/`GLIBC_2.39` and a HarfBuzz newer
+  than 6.0 (bundled pango uses `hb_ot_color_has_paint`); Debian bookworm
+  has glibc 2.36 and HarfBuzz 6.0. libstdc++ is no problem, the bundle
+  ships one in `checkrt/`.
+- Decision (maintainer, 2026-11-18): base image
   `mcr.microsoft.com/devcontainers/base:2.2.5-trixie` (glibc 2.41,
   HarfBuzz 10.2). All apt packages were checked against the trixie index;
-  only `libasound2` → `libasound2t64` changed. Not yet built: needs a
-  rebuild by the maintainer.
-- Stopgap for the running bookworm container:
-  `.devcontainer/patch-azahar-bookworm.sh` (not used by the Dockerfile;
-  delete after the rebuild). It copies trixie's `libc6` and
-  `libharfbuzz0b` (pinned versions + SHA-256) and the bundle's
-  libstdc++/libgcc_s into `/opt/azahar/usr/lib`, sets the interpreter of
-  `/opt/azahar/usr/bin/azahar` to that dir's `ld-linux` and turns its
-  RUNPATH into an RPATH. Start it as `/opt/azahar/usr/bin/azahar`.
-  Rerun `install-azahar.sh` + the patch after every workspace restart (root
-  FS is ephemeral).
-- Why not `LD_LIBRARY_PATH` (first attempt): Azahar spawns `sh`, which
-  inherited the variable and crashed (`/opt/glibc/libc.so.6: undefined
-  symbol: __tunable_is_initialized, version GLIBC_PRIVATE`). The AppImage's
-  `checkrt/exec.so` only hooks `exec*`, not glibc 2.41's
-  `posix_spawn`-based `popen`/`system`. With the RPATH approach no variable
-  is set, so children use the system libraries.
+  only `libasound2` → `libasound2t64` changed. From here on the project
+  assumes the dev container runs trixie.
+- Lesson from a temporary bookworm workaround (since removed): never run
+  Azahar with a newer glibc via `LD_LIBRARY_PATH`. Azahar spawns `sh`,
+  which inherits the variable and crashes (`undefined symbol:
+  __tunable_is_initialized, version GLIBC_PRIVATE`).
 
 ### devkitPro: download server returns HTTP 403
 - `curl https://apt.devkitpro.org/install-devkitpro-pacman` → 403 from this
@@ -47,30 +34,27 @@ at the top of each section.
   it on a machine where devkitPro is reachable. Not added to the Dockerfile.
 
 ## Dev container
-- The repo had no `.devcontainer/`. The workspace runs on
+- The repo had no `.devcontainer/`. The workspace was started on
   `devcontainers/base` 2.2.5 bookworm (from
   `/usr/local/etc/vscode-dev-containers/meta.env`) with Go 1.27.3 at
   `/usr/local/go` (`/go` GOPATH → Go feature), Node via nvm (Node feature)
   and `/usr/bin/claude` (Claude Code feature). `.devcontainer/` was
   **reconstructed** from that; the Coder template may set more (mounts,
   settings, feature versions — the Node feature major is a guess). Compare
-  with the template before relying on a rebuild.
+  with the template before relying on a rebuild. The base was then switched
+  to trixie (see "Resolved" above).
 - The root filesystem of this Coder workspace is ephemeral; only
   `/home/vscode/volume` persists. Everything under `/opt` and `/usr/local/bin`
   disappears on restart unless the image provides it.
 
 ## Installed tools checklist
-Live = installed in the running (bookworm) container; the Dockerfile
-installs the same on trixie.
-
 | Tool | Version | Installed live | Recorded in |
 | --- | --- | --- | --- |
 | apt: xvfb xauth mesa-utils libgl1-mesa-dri libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libfontconfig1 libdbus-1-3 x11-utils imagemagick file jq unzip curl python3 | distro | yes | `.devcontainer/Dockerfile` |
 | apt: libopengl0 libharfbuzz0b libjack-jackd2-0 libasound2 (trixie: libasound2t64) libfribidi0 libusb-1.0-0 (found missing via `ldd`) | distro | yes | `.devcontainer/Dockerfile` |
 | apt: squashfs-tools binutils (AppImage extraction) | distro | yes | `.devcontainer/Dockerfile` |
-| apt: shellcheck | distro (bookworm 0.9.0) | yes | `.devcontainer/Dockerfile` |
+| apt: shellcheck | distro | yes | `.devcontainer/Dockerfile` |
 | Azahar AppImage, extracted to `/opt/azahar` | 2127.0-rc3, sha256 `173dcedb…fc1da` | yes | `Dockerfile` ARGs + `.devcontainer/install-azahar.sh` |
-| trixie libc6 2.41-12+deb13u4 + libharfbuzz0b 10.2.0-1+deb13u1 into `/opt/azahar/usr/lib`, apt: patchelf | bookworm stopgap | yes | `.devcontainer/patch-azahar-bookworm.sh` (not needed on trixie) |
 | golangci-lint | 2.15.0 | yes | `.devcontainer/install-go-tools.sh` (Renovate) |
 | goreleaser | 2.20.2 | yes | `.devcontainer/install-go-tools.sh` (Renovate) |
 | actionlint | 1.7.12 | yes | `.devcontainer/install-go-tools.sh` (Renovate) |
@@ -81,7 +65,7 @@ installs the same on trixie.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
-- Azahar 2127.0-rc3 starts under Xvfb (bookworm + stopgap): main window
+- Azahar 2127.0-rc3 starts under Xvfb: main window
   "Azahar 2127.0-rc3" (853x512), OpenGL renderer (llvmpipe), game-list
   placeholder. **No first-run setup dialog** with a fresh, empty
   `HOME`/`XDG_CONFIG_HOME`; it wrote `~/.config/azahar-emu/qt-config.ini`.
