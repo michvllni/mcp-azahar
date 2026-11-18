@@ -14,8 +14,11 @@ at the top of each section.
   findings fixed). Unit tests against `internal/rpc/fakeserver`, and a live
   test (`-tags integration`) passed against Azahar 2127.0-rc3.
 - Phase 3 (sessions and process manager, `internal/session`,
-  `internal/emu`): implemented per D9; live launch test passed. Next:
-  Phase 4 (screenshots via RPC).
+  `internal/emu`): done, reviewed (PR #9, two rounds); live launch test
+  passed.
+- Phase 4 (screenshots, `internal/capture`): done; live capture test
+  passed (top 400x240, bottom 320x240, composite 400x480). Next: Phase 5
+  (CLI).
 
 ## Blockers
 
@@ -74,6 +77,16 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 4
+- `capture.RPC` takes one RPC screenshot per screen (PNG straight from
+  Azahar, no re-encoding) and reports the size Azahar returned, so attached
+  instances with another layout still work. `capture.Compose` builds one
+  PNG in 3DS arrangement (top above, bottom centered) for single-file
+  output; MCP will return the shots as separate images.
+- Failures name the screen and add a hint: software renderer
+  (Unsupported), concurrent capture (Busy), paused or blocked emulation
+  (Timeout).
+
 ### Phase 3
 - `emu.Manager.Launch`, under the store lock plus a best-effort host lock
   `/tmp/mcp-azahar-45987.lock` (shared by all users and state dirs; opened
