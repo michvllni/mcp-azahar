@@ -100,6 +100,14 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   placeholder bootstrap. A new configuration expires unless a publish
   succeeds within 2 days. The docs disagree on one vs. up to 10
   configurations per package; we need one.
+- Review of #21: the wrapper re-raised a child's death signal with its
+  own forwarding handler still installed, so a killed binary looked like
+  exit 0 (now 128+n); flags without a command (`--allow-dir /p`) now start
+  `serve`; no signal forwarding on Windows (the console delivers Ctrl+C,
+  `child.kill` would terminate hard); platform packages set
+  `preferUnplugged` (Yarn PnP keeps packages zipped). Unknown: whether
+  npm sets `latest` on a first publish with `--tag bootstrap`; so a
+  pre-release also gets `latest` while a package has only the placeholder.
 - Local check here: packed tarballs installed into a scratch project;
   `mcp-azahar version` and the default `serve` (tools/list: 20 tools)
   worked through the wrapper; exit codes pass through.

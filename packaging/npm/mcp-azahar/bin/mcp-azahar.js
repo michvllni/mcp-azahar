@@ -4,7 +4,8 @@
 // npm wrapper for mcp-azahar (DECISIONS.md D10): runs the binary from the
 // platform package npm installed (mcp-azahar-<platform>-<arch>, an
 // optionalDependency), passing arguments, stdio, signals and the exit code
-// through. Without arguments it runs `serve`, so MCP clients can start it as
+// through. Without a command (no arguments, or only flags such as
+// `--allow-dir DIR`) it runs `serve`, so MCP clients can start it as
 // `npx -y mcp-azahar`.
 "use strict";
 
@@ -43,10 +44,29 @@ try {
   process.exit(1);
 }
 
-const args = process.argv.slice(2);
-const child = spawn(bin, args.length > 0 ? args : ["serve"], { stdio: "inherit" });
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(sig, () => child.kill(sig));
+// withCommand prepends `serve` unless the arguments name a command or ask
+// for help or the version. Flags of serve and of the root (--session) mix.
+function withCommand(args) {
+  const info = new Set(["-h", "--help", "-v", "--version"]);
+  if (args.some((a) => info.has(a))) return args;
+  // A non-flag argument right after a flag that takes a value is that
+  // value, not a command: `--session x` or `--allow-dir /p`.
+  const valued = new Set(["-s", "--session", "--allow-dir", "--timeout"]);
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith("-")) return args;
+    if (valued.has(args[i])) i++;
+  }
+  return ["serve", ...args];
+}
+
+const child = spawn(bin, withCommand(process.argv.slice(2)), { stdio: "inherit" });
+const forwarded = ["SIGINT", "SIGTERM", "SIGHUP"];
+// On Windows the console already delivers Ctrl+C to the child, and
+// child.kill() would terminate it hard; forward only elsewhere.
+if (process.platform !== "win32") {
+  for (const sig of forwarded) {
+    process.on(sig, () => child.kill(sig));
+  }
 }
 child.on("error", (err) => {
   process.stderr.write(`mcp-azahar: ${err.message}\n`);
@@ -54,6 +74,8 @@ child.on("error", (err) => {
 });
 child.on("exit", (code, signal) => {
   if (signal) {
+    // Die of the same signal; our forwarding handler would swallow it.
+    process.removeAllListeners(signal);
     process.kill(process.pid, signal);
     return;
   }

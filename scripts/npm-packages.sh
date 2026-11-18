@@ -22,7 +22,8 @@
 #   -o OUT      Output directory (default: DIST/npm)
 #   -p          Publish the packages after building them
 #   -t TAG      npm dist-tag for -p (default: latest, or next for versions
-#               with a pre-release suffix)
+#               with a pre-release suffix; a pre-release also becomes
+#               latest while a package has no real release yet)
 #   -n          With -p: npm publish --dry-run
 #   -h          Show this help
 #
@@ -36,14 +37,14 @@ usage() {
 }
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-version="" dist="dist" out="" publish=false tag="" dry=()
+version="" dist="dist" out="" publish=false tag="" explicit_tag=false dry=()
 while getopts ":v:d:o:pt:nh" opt; do
   case "$opt" in
     v) version="$OPTARG" ;;
     d) dist="$OPTARG" ;;
     o) out="$OPTARG" ;;
     p) publish=true ;;
-    t) tag="$OPTARG" ;;
+    t) tag="$OPTARG"; explicit_tag=true ;;
     n) dry=(--dry-run) ;;
     h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -82,6 +83,7 @@ platform_package() {
     repository: {type: "git", url: "git+https://github.com/michvllni/mcp-azahar.git"},
     license: "GPL-3.0-or-later",
     os: [$os], cpu: [$cpu],
+    preferUnplugged: true,
     files: ["bin/", "LICENSE"]
   }' > "$dir/package.json"
   printf 'mcp-azahar binary for %s/%s. Install the package mcp-azahar instead: https://www.npmjs.com/package/mcp-azahar\n' "$os" "$cpu" > "$dir/README.md"
@@ -113,11 +115,42 @@ if [ "$(jq -r '.optionalDependencies | keys | sort | join(" ")' "$wrapper/packag
 fi
 echo "built ${platforms[*]} mcp-azahar $version in $out" >&2
 
+# published NAME: succeed if $version of NAME is on npm, fail if not (E404),
+# exit the script on any other error (network, registry).
+published() {
+  local outp
+  if outp="$(npm view "$1@$version" version 2>&1)"; then
+    [ "$outp" = "$version" ]
+    return
+  fi
+  if grep -q E404 <<<"$outp"; then
+    return 1
+  fi
+  echo "npm view $1@$version failed: $outp" >&2
+  exit 1
+}
+
+# tag_for NAME: the dist-tag to publish NAME with. A pre-release also gets
+# "latest" while the package has no real release yet (only the bootstrap
+# placeholder), so `npx mcp-azahar` always finds a working version.
+tag_for() {
+  local latest
+  if [ "$tag" != next ] || $explicit_tag; then
+    echo "$tag"
+    return
+  fi
+  latest="$(npm view "$1" dist-tags.latest 2>/dev/null || true)"
+  case "$latest" in
+    "" | 0.0.0-bootstrap) echo latest ;;
+    *) echo "$tag" ;;
+  esac
+}
+
 $publish || exit 0
 for name in "${platforms[@]}" mcp-azahar; do
-  if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
+  if published "$name"; then
     echo "$name@$version is already published, skipped" >&2
     continue
   fi
-  (cd "$out/$name" && npm publish --access public --tag "$tag" "${dry[@]}")
+  (cd "$out/$name" && npm publish --access public --tag "$(tag_for "$name")" "${dry[@]}")
 done

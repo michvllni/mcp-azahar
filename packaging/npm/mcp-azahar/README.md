@@ -16,6 +16,10 @@ MCP client configuration:
 {"mcpServers": {"azahar": {"command": "npx", "args": ["-y", "mcp-azahar"]}}}
 ```
 
+Tools only touch files in the server's working directory; allow more with
+`"args": ["-y", "mcp-azahar", "serve", "--allow-dir", "/path/to/project"]`
+(flags alone also start the server).
+
 You need Azahar 2127.0 or newer; `launch` runs it headless with Xvfb on
 Linux. This package installs a prebuilt binary for your platform (Linux,
 macOS, Windows; x64 and arm64) through an optional dependency. Documentation,

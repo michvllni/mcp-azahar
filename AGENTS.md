@@ -128,7 +128,8 @@ goreleaser check && goreleaser build --snapshot --clean
   `image` builds it as a snapshot and launches the fixture inside it.
 - npm: the release job then publishes `mcp-azahar-<os>-<cpu>` and the
   wrapper `mcp-azahar` with trusted publishing (`id-token: write`, no
-  token; `-rc` versions get the dist-tag `next`). Before the first
+  token; `-rc` versions get the dist-tag `next`, and also `latest` while a
+  package has only the bootstrap placeholder). Before the first
   release the maintainer runs `scripts/npm-bootstrap.sh` once (npm login
   with 2FA): trust can only be set for existing packages and expires
   unless a publish follows within 2 days. Re-runs skip published versions.
@@ -154,8 +155,9 @@ goreleaser check && goreleaser build --snapshot --clean
 
 ## Conventions
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
-  (or the equivalent comment syntax; `*.go *.sh *.yml *.yaml *.json
-  Dockerfile` are enforced by `scripts/check-spdx.sh` in CI). Code ported
+  (or the equivalent comment syntax; `*.go *.sh *.c *.js *.yml *.yaml
+  *.json *.json5 Dockerfile` are enforced by `scripts/check-spdx.sh` in
+  CI; `package.json` declares `"license": "GPL-3.0-or-later"` instead). Code ported
   from Azahar keeps its copyright notice plus a comment naming the source
   file and commit.
 - All code lives in `internal/`; never implement a feature twice for CLI
