@@ -111,7 +111,7 @@ func TestFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkFixtureImage(t, img)
+		checkFixtureImage(t, img, 160, 120)
 	})
 	t.Run("save and load state", func(t *testing.T) {
 		cli(t, 0, "write", "0x"+addressOf(t, cli, "test_state.scratch"), "11 22 33 44")
@@ -174,8 +174,8 @@ func addressOf(t *testing.T, cli func(*testing.T, int, ...string) string, target
 
 // checkFixtureImage checks the composed screenshot (400x480: top above
 // bottom): the top shows red, green, blue and white bars, the bottom is dark
-// gray with a white square at the last touch (160, 120).
-func checkFixtureImage(t *testing.T, img image.Image) {
+// gray with a white square at the last touch (tx, ty).
+func checkFixtureImage(t *testing.T, img image.Image, tx, ty int) {
 	t.Helper()
 	if b := img.Bounds(); b.Dx() != 400 || b.Dy() != 480 {
 		t.Fatalf("size %v", b)
@@ -203,7 +203,7 @@ func checkFixtureImage(t *testing.T, img image.Image) {
 		{350, 120, [3]uint32{255, 255, 255}},
 		// Bottom screen: 320 wide, centered (offset 40), below the top.
 		{40 + 10, 240 + 10, [3]uint32{0x20, 0x20, 0x20}},
-		{40 + 160, 240 + 120, [3]uint32{255, 255, 255}},
+		{40 + tx, 240 + ty, [3]uint32{255, 255, 255}},
 	} {
 		if got := rgb(c.x, c.y); !near(got, c.want) {
 			t.Errorf("pixel (%d, %d) = %v, want about %v", c.x, c.y, got, c.want)
@@ -268,7 +268,7 @@ func mcpSmoke(t *testing.T, env []string, dir string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkFixtureImage(t, img)
+		checkFixtureImage(t, img, 100, 50) // touched last by smoke.yaml
 		return
 	}
 	t.Fatalf("no image content: %v", res["content"])

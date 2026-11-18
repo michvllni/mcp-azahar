@@ -41,6 +41,7 @@ scripts/             check-version.sh (tag vs. version), check-spdx.sh,
 .goreleaser.yaml     release builds   .golangci.yml  linter config
 docs/PLAN.md         phased plan        docs/DECISIONS.md  design decisions
 docs/PROTOCOL.md     Azahar RPC wire format and emulator facts (Phase 1)
+testdata/fixture/    libctru test homebrew (main.c, build.sh) and smoke.yaml
 NOTES.md             running log: status, blockers, installed-tools checklist
 ```
 
@@ -67,6 +68,16 @@ screenshots, save/load, and that `Stop` leaves nothing running. Needs UDP
 port 45987 free:
 ```sh
 MCPAZ_LIVE=1 [AZAHAR_BIN=...] go test -tags integration -run TestLiveLaunch -v ./internal/emu/
+```
+Fixture integration test: runs the CLI binary (the test binary itself,
+`MCPAZ_TEST_MAIN=1`) against the real Azahar with the fixture homebrew:
+launch, input, touch, screenshot pixels, save/load, logs, the one-per-host
+rule, `testdata/fixture/smoke.yaml` and an MCP screenshot over stdio. The
+fixture needs devkitPro, which is not in the dev container (HTTP 403): take
+it from CI (`gh run download <run-id> -n fixture -D build`) or build it
+with `testdata/fixture/build.sh` where devkitPro works:
+```sh
+MCPAZ_FIXTURE_DIR=$PWD/build go test -tags integration -run TestFixture -v ./cmd/mcp-azahar/
 ```
 Live capture test against a running Azahar (single-screen layout):
 `AZAHAR_RPC_ADDR=127.0.0.1:45987 go test -tags integration -run TestLiveCapture -v ./internal/capture/`.
@@ -106,7 +117,10 @@ goreleaser check && goreleaser build --snapshot --clean
   SHAs with the version in a comment), devcontainer features, and tool
   versions annotated with `# renovate: datasource=… depName=…` on the line
   above the version. Annotate every new pinned version the same way.
-- No integration-test job yet: it needs the fixture (Phase 7).
+- Jobs `fixture` (builds `testdata/fixture` in the pinned
+  `devkitpro/devkitarm` image, uploads it as artifact `fixture`) and
+  `integration` (Debian trixie container, Azahar via
+  `install-azahar.sh`, runs `TestFixture` and `TestLiveLaunch`).
 
 ## Conventions
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
@@ -180,6 +194,10 @@ goreleaser check && goreleaser build --snapshot --clean
   `LD_LIBRARY_PATH`: Azahar spawns `sh`, which then crashes.
 - Azahar ignores SIGINT/SIGTERM; SIGHUP stops it, SIGKILL as last resort.
 - Azahar shows no first-run dialog with a fresh config dir.
+- Azahar buffers its log file and flushes only on errors unless
+  `instant_debug_log=true`; app debug output is Debug level. Both are in
+  the seed config (`internal/emu/seed.go`, PROTOCOL.md §7); attached
+  sessions need them set by hand to see app output live.
 - RPC (see `docs/PROTOCOL.md`): binds `0.0.0.0:45987`, hard-coded, so one
   RPC server per network namespace; it only starts once an app is loaded
   and is recreated by LoadState; WriteMemory never reports failure (read

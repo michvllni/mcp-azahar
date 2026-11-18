@@ -335,14 +335,30 @@ keys get defaults, and Azahar writes the full file back.
 ```ini
 [Debugging]
 enable_rpc_server=true
+instant_debug_log=true
 [Layout]
 layout_option=1
 swap_screen=false
 [Miscellaneous]
 check_for_update_on_start=false
+log_filter=*:Info Debug.Emulated:Debug
 [UI]
 confirmClose=false
 ```
+
+### Log file and app output
+- The app's `svcOutputDebugString` text is logged as class
+  `Debug.Emulated` at **Debug** level (`src/core/hle/kernel/svc.cpp:1190`),
+  so the default filter `*:Info` (`src/common/settings.h:708`) drops it;
+  `log_filter` (group `Miscellaneous`, `config.cpp:601`) adds it.
+- The file backend writes through a buffer and flushes only for entries
+  of level Error or above (`src/common/logging/backend.cpp:180-186`), so
+  a running Azahar's log lags by minutes or until the next error
+  (*observed*: no app lines after 15 s). `instant_debug_log=true`
+  (group `Debugging`, `config.cpp:535`; `backend.cpp:350-354`) writes and
+  flushes every entry.
+- Lines look like (*observed*)
+  `[   0.525429] Debug.Emulated <Debug> core/hle/kernel/svc.cpp:OutputDebugString:1190: fixture: ready ...`.
 - `enable_rpc_server`: §1.
 - `layout_option=1`: single-screen layout, so screenshots are exactly one
   screen (§5.5).

@@ -11,10 +11,12 @@ import (
 // start (PROTOCOL.md §7): RPC on, single-screen layout so screenshots are
 // exactly one screen (DECISIONS.md D4), no update-check or close dialogs,
 // and the app's svcOutputDebugString lines (Debug.Emulated, logged at
-// Debug level) in the log.
+// Debug level) in the log, written at once: otherwise Azahar buffers the
+// log file and flushes it only on Error-level entries (PROTOCOL.md §7).
 // No "\default" keys: "\default=true" would make Azahar ignore the value.
 const seedConfig = `[Debugging]
 enable_rpc_server=true
+instant_debug_log=true
 [Layout]
 layout_option=1
 swap_screen=false
