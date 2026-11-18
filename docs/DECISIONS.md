@@ -209,35 +209,60 @@ all built by the release workflow (PLAN.md Phase 8):
 1. **GitHub Releases** (goreleaser archives) and
    `go install github.com/michvllni/mcp-azahar/cmd/mcp-azahar@latest`.
 2. **Container image `ghcr.io/michvllni/mcp-azahar`** with mcp-azahar,
-   Azahar (extracted AppImage), Xvfb and Mesa: runs headless sessions
-   without installing anything else; the natural way to use it in CI.
-3. **Official MCP Registry** entry, published through goreleaser's `mcp:`
-   section, listing the npm package and the container image.
-4. **npm package `mcp-azahar`** so MCP clients can run
-   `npx -y mcp-azahar serve` (a thin wrapper with per-platform binaries,
-   as esbuild and similar Go/Rust tools do).
+   Azahar (extracted AppImage), Xvfb and Mesa: headless sessions without
+   installing anything else; the natural way to use it in CI.
+3. **npm package `mcp-azahar`** so MCP clients can run
+   `npx -y mcp-azahar serve`: a thin wrapper with per-platform binary
+   packages (`mcp-azahar-linux-x64` etc.), as esbuild and similar Go/Rust
+   tools do. The names were free on npm on 2026-11-18.
+4. **Official MCP Registry** entry `io.github.michvllni/mcp-azahar`,
+   listing the npm package and the container image.
 
 **Why:**
-- The MCP Registry only accepts npm, PyPI, NuGet and OCI packages, not
-  bare release binaries (goreleaser 2.20 `mcp` schema).
+- The registry needs a package it can verify (npm, PyPI, NuGet, OCI,
+  cargo or an MCPB bundle on a GitHub release, per the registry's
+  package-types docs). goreleaser 2.20's `mcp` section supports npm,
+  PyPI, NuGet and OCI; we use npm and OCI and skip MCPB for now.
 - The image removes the hardest setup step (Azahar on a recent glibc plus
   Xvfb) and is ideal for CI.
 - npx is the common way MCP clients start servers; it is convenient even
   though a host still needs Azahar and a display for `launch`.
-- The name `mcp-azahar` was free on npm (D6).
 
 **Consequences:**
-- The image redistributes Azahar's GPL binary: the image and release
-  notes must name Azahar's version and source (tag, commit, repository).
-- goreleaser OSS has no npm publishing, so the npm package is built and
-  published by a separate workflow step (registry token or trusted
-  publishing), from the same release.
-- The image is large (Qt, Mesa: several hundred MB). Tool versions in it
-  follow the dev container pins.
-- Not now: Homebrew, PyPI, other registries.
+- **Registry entries carry no arguments,** so clients installing from the
+  registry run `npx -y mcp-azahar` or `docker run -i --rm <image>`: the
+  npm wrapper and the image entrypoint default to `serve` (stdio), and the
+  image must be run with `-i`.
+- **Order and ownership checks:** the registry verifies ownership through
+  `mcpName` in package.json (npm) and the
+  `io.modelcontextprotocol.server.name` label (OCI). The registry entry is
+  published last, after npm and the image, with GitHub OIDC
+  (`id-token: write`): `mcp-publisher` as the final workflow step, or
+  goreleaser's `mcp` section if its order allows it.
+- **npm:** goreleaser OSS has no npm publishing, so a separate workflow
+  step publishes the wrapper and the platform packages, with provenance
+  (trusted publishing per package; the first publish may need a token).
+- **GPL compliance:** Azahar's binary is GPL-3.0 (LICENSE.txt). Each
+  image release ships Azahar's Corresponding Source by attaching the
+  matching `azahar-unified-source-<version>.tar.xz` (published by Azahar,
+  includes submodules) to our GitHub release. The image contains the
+  license texts, names Azahar's version, and points to the sources of the
+  Qt (LGPL-3.0) build in the AppImage and of the Debian base packages
+  (snapshot.debian.org). Common practice, not legal advice.
+- **Image platform and version:** linux/amd64 only (Azahar ships only an
+  x86_64 AppImage; arm64 would need building Azahar from source). The
+  image ships the Azahar version pinned in `.devcontainer/Dockerfile`
+  (`AZAHAR_VERSION`, currently 2127.0-rc3: no stable 2127 yet) and says
+  so. Its size is an estimate of several hundred MB (Qt, Mesa).
+- **Tags:** the release version; `latest` only for non-prereleases
+  (goreleaser `dockers_v2`, with an SBOM).
+- **RPC isolation (D9):** the container's own network namespace keeps
+  UDP 45987 off the host network. Do not publish the port (`-p 45987`) or
+  use `--network host`; parallel sessions mean one container each.
+- Not now: Homebrew, PyPI, MCPB bundles.
 
-**Revisit if:** users ask for other channels, or the MCP Registry adds a
-package type for plain release binaries.
+**Revisit if:** users ask for other channels, or goreleaser supports MCPB
+(then a registry entry pointing at our release binaries becomes cheap).
 
 ## Known unknowns (resolved in Phase 1)
 All answered in `docs/PROTOCOL.md`:
