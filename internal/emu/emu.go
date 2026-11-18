@@ -674,6 +674,22 @@ func (m *Manager) Status(ctx context.Context, name string) (*Status, error) {
 	return st, nil
 }
 
+// StateInfo returns the newest save state file for slot: its modification
+// time and size; ok is false if there is none or the user directory is
+// unknown.
+func StateInfo(s *session.Session, slot int) (mod time.Time, size int64, ok bool) {
+	if s.UserDir() == "" {
+		return time.Time{}, 0, false
+	}
+	matches, _ := filepath.Glob(filepath.Join(s.UserDir(), "states", fmt.Sprintf("*.%02d.cst", slot)))
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(mod) {
+			mod, size, ok = fi.ModTime(), fi.Size(), true
+		}
+	}
+	return mod, size, ok
+}
+
 // HasState reports whether a session has a save state in slot. Loading an
 // empty slot leaves Azahar stuck behind a modal dialog (PROTOCOL.md §5.7),
 // so callers check this first. known is false when the session's user

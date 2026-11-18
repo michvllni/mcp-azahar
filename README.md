@@ -61,6 +61,48 @@ mcp-azahar stop
   `$XDG_STATE_HOME/mcp-azahar`. A session's directory keeps Azahar's portable
   user dir (config, log, save states).
 
+## Scripted tests and program state
+Build your homebrew with debug info (`-g`) and pass its ELF to `launch --elf`
+(or `attach --elf`). Then read variables by name instead of by address:
+
+```sh
+mcp-azahar symbols --filter state
+mcp-azahar read-symbol test_state                 # whole struct as JSON-like text
+mcp-azahar read-symbol test_state.last_buttons --json
+mcp-azahar read-symbol 0x00101000 --type s16      # raw address with a type
+mcp-azahar wait-for test_state.frame 60 --op ge --timeout 5s   # exit 3 on timeout
+```
+
+A **sequence** file describes a whole test run (YAML or JSON) and works without
+any AI involved, e.g. in CI:
+
+```yaml
+name: smoke
+elf: build/app.elf             # relative to this file; optional
+steps:
+  - press: A
+  - press: [L, R]
+    for: 300ms
+  - hold: B
+  - release: all
+  - touch: {x: 160, y: 120}
+  - circle_pad: {x: 154, y: 0, for: 200ms}
+  - wait: 500ms
+  - wait_for: {target: test_state.frame, op: ge, value: 60, timeout: 5s}
+  - assert: {target: test_state.last_buttons, value: 0}
+  - assert: {target: "0x00101000", type: u32, op: ne, value: 0}
+  - write: {address: "0x00101000", bytes: "de ad be ef"}
+  - screenshot: {screen: both, output: out/smoke.png}
+  - save_state: 1              # waits until Azahar has written the file
+  - load_state: 1
+  - log_contains: {text: "ready", timeout: 5s}
+```
+
+`mcp-azahar sequence smoke.yaml` stops at the first failing step: exit 0 if all
+pass, 3 if an `assert`/`wait_for`/`log_contains` check fails, 2 for an invalid
+file, 1 for other errors. `--json` prints a report per step. Comparisons (`op`):
+eq, ne, lt, le, gt, ge, and `changed` for `wait_for`.
+
 ## Development
 The repository ships a dev container (`.devcontainer/`, Debian 13 trixie)
 with Go, Xvfb, Mesa software rendering, Azahar extracted to `/opt/azahar`,

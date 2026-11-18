@@ -7,7 +7,7 @@
 #   check-spdx.sh [-h]
 #
 # DESCRIPTION
-#   Lists tracked files (git ls-files) of type *.go, *.sh, *.yml, *.yaml,
+#   Lists tracked files (git ls-files) of type *.go, *.sh, *.c, *.yml, *.yaml,
 #   *.json, *.json5 and Dockerfile and fails if any of them lacks the line
 #   "SPDX-License-Identifier: GPL-3.0-or-later" within its first 5 lines.
 #   Run from anywhere inside the repository.
@@ -37,7 +37,7 @@ while IFS= read -r -d '' f; do
     echo "missing SPDX header: $f" >&2
     missing=1
   fi
-done < <(git ls-files -z -- '*.go' '*.sh' '*.yml' '*.yaml' '*.json' '*.json5' '*Dockerfile')
+done < <(git ls-files -z -- '*.go' '*.sh' '*.c' '*.yml' '*.yaml' '*.json' '*.json5' '*Dockerfile')
 
 [ "$missing" -eq 0 ] && echo "ok: all source files have SPDX headers"
 exit "$missing"

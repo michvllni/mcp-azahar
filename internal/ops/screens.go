@@ -4,9 +4,11 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/michvllni/mcp-azahar/internal/capture"
 	"github.com/michvllni/mcp-azahar/internal/emu"
@@ -69,17 +71,54 @@ func SaveScreenshot(shots []capture.Shot, path string, split bool) ([]SavedFile,
 
 // --- save states ----------------------------------------------------------
 
-// SaveState saves to slot 0..10.
+// DefaultSaveWait bounds how long SaveState waits for the state file.
+const DefaultSaveWait = 15 * time.Second
+
+// SaveState saves to slot 0..10. Azahar accepts the request at once but
+// writes the file about a second later (PROTOCOL.md §5.7), so for launched
+// sessions, whose state directory is known, SaveState waits until the file
+// is written and complete. For attached sessions it returns once Azahar
+// has accepted the request.
 func (o *Ops) SaveState(ctx context.Context, name string, slot int) error {
 	if slot < 0 || slot >= rpc.SaveStateSlots {
 		return usage("slot %d outside 0..%d", slot, rpc.SaveStateSlots-1)
 	}
-	_, c, err := o.client(ctx, name)
+	s, c, err := o.client(ctx, name)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	return c.SaveState(ctx, slot)
+	before, _, _ := emu.StateInfo(s, slot)
+	if err := c.SaveState(ctx, slot); err != nil {
+		return err
+	}
+	if s.UserDir() == "" {
+		return nil
+	}
+	wait := o.SaveWait
+	if wait <= 0 {
+		wait = DefaultSaveWait
+	}
+	deadline := time.Now().Add(wait)
+	var lastSize int64 = -1
+	for {
+		mod, size, ok := emu.StateInfo(s, slot)
+		// Written after the request, and the size stopped changing.
+		if ok && mod.After(before) && size > 0 && size == lastSize {
+			return nil
+		}
+		if ok && mod.After(before) {
+			lastSize = size
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("azahar accepted the save to slot %d but did not write the state file within %v", slot, wait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // LoadState loads slot 0..10. For launched sessions it first checks that
