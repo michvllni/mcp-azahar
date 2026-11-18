@@ -7,7 +7,8 @@ reasoning, and what would make us revisit it. Status as of 2026-11-18.
 **Decision:** Talk to Azahar exclusively through its RPC server, no fork.
 
 **Why:** Azahar 2127 (in prerelease as of Nov 2026; 2127.0-rc2 on Nov 6)
-added everything an automation tool needs except screenshots:
+added everything an automation tool needs (Phase 1 found that it also has
+screenshot commands, see D4 and `docs/PROTOCOL.md`):
 - input injection (PR #2731): buttons, HOME/POWER, touch, circle pad;
   input is held until the next packet changes or clears it
 - save state commands (PR #2730)
@@ -24,14 +25,18 @@ in `dist/`).
   current source (see PLAN.md Phase 1).
 - Since 2121.2 the RPC server is disabled by default (a security fix: it
   was LAN-reachable and unauthenticated). We enable it per session in an
-  isolated config, bound to localhost.
+  isolated config.
+- Correction (Phase 1, 2026-11-18): the bind address and port cannot be
+  configured. Azahar 2127 always listens on `0.0.0.0:45987`
+  (`docs/PROTOCOL.md` §2). How sessions isolate it (and run in parallel) is
+  an open decision, due before Phase 3 (NOTES.md "Open questions").
 
 **Revisit if:** Azahar removes or substantially redesigns RPC.
 
 ## D2 — Separate project, not an Azahar contribution
 **Decision:** mcp-azahar lives in its own repo. Small, general-purpose
-emulator-side improvements (e.g. an RPC screenshot command) are proposed
-upstream separately.
+emulator-side improvements (e.g. a configurable RPC port and bind
+address) are proposed upstream separately.
 
 **Why:**
 - The tool is a client of the RPC, not part of the emulator. Comparable
@@ -43,8 +48,8 @@ upstream separately.
 - Asking Azahar maintainers to own an AI-agent integration is a hard sell
   and an unnecessary burden on them.
 - Azahar asks contributors to open a feature-request issue before writing
-  code. A working tool makes a much stronger case for an upstream
-  screenshot command than a hypothetical.
+  code. A working tool makes a much stronger case for an upstream change
+  than a hypothetical.
 
 **Revisit if:** Azahar maintainers ask for the integration upstream.
 
@@ -70,18 +75,33 @@ while an agent drives it via MCP.
 
 **Revisit if:** the MCP Go SDK falls behind the spec significantly.
 
-## D4 — Screenshots via X11 capture for now
-**Decision:** Capture screenshots by grabbing the Azahar window on an Xvfb
-display and cropping to the top (400x240) and bottom (320x240) screens.
+## D4 — Screenshots via Azahar's RPC screenshot command
+**Decision (maintainer, 2026-11-18, replaces "X11 capture for now"):**
+Take screenshots with the RPC requests `TakeScreenshot`/`ReadScreenshot`.
+Sessions pin the single-screen layout (`[Layout] layout_option=1`), so a
+normal capture is the top screen (400x240) and a capture with the
+`SecondaryWindow` flag the bottom screen (320x240), times the resolution
+scale. No X11 capture backend.
 
-**Why:** Azahar's RPC has no screenshot command (as of 2127). X11 capture
-works today, in containers and CI, with no emulator changes.
+**Why:** Phase 1 found that Azahar 2127 has these commands, contrary to the
+original premise of this decision (`docs/PROTOCOL.md` §5.5, verified
+headless). Compared with X11 capture they:
+- return exact per-screen images with no window cropping or layout guessing;
+- work on every OS and also for instances started by hand (`attach`);
+- need no access to the X display, only the RPC connection;
+- can render above native resolution (`res_scale` up to 10).
 
-**Consequence:** Capture is Linux-first. The `Capturer` interface keeps
-room for an `rpc` backend.
+**Consequences:**
+- Xvfb is still needed to *run* Azahar headless, but not to capture.
+- Screenshots fail with the software renderer (`Unsupported`) and time out
+  while emulation renders no frames (e.g. paused).
+- For `attach`ed instances the user's layout setting applies; the capturer
+  must report the actual size instead of assuming one.
+- The `Capturer` interface stays, so another backend can be added if ever
+  needed.
 
-**Revisit if:** Azahar adds an RPC screenshot/framebuffer command
-(we intend to propose one; draft in `docs/upstream-proposal.md`).
+**Revisit if:** Azahar removes or changes the RPC screenshot commands, or
+screenshots are needed in situations RPC cannot serve.
 
 ## D5 — Test via a fixture homebrew with known state
 **Decision:** Ship a tiny libctru homebrew (`testdata/fixture/`) that
@@ -130,9 +150,11 @@ Xvfb, Mesa software rendering, an extracted Azahar AppImage, and devkitPro.
 **Why:** Reproducible environment for humans, agents and CI; Azahar runs
 headless without a host display; no FUSE needed after AppImage extraction.
 
-## Known unknowns (to resolve in PLAN.md Phase 1)
-- Exact 2127 RPC wire format, payload limits, and transport details
-- Config key/flag that enables the RPC server
-- Whether pause, frame advance, reset or app load exist over RPC
-- Whether a first-run setup dialog blocks homebrew launch in a fresh config
-- Whether the Azahar AppImage runs cleanly under Xvfb with Mesa
+## Known unknowns (resolved in Phase 1)
+All answered in `docs/PROTOCOL.md`:
+- RPC wire format, payload limits and transport: §2–§5.
+- Enabling the RPC server: `[Debugging] enable_rpc_server=true` (§1).
+- Pause, frame advance, reset or app load over RPC: not available (§6).
+- First-run dialog: none with a fresh config (§7).
+- AppImage under Xvfb with Mesa: works on Debian trixie (bookworm's glibc
+  is too old; NOTES.md).

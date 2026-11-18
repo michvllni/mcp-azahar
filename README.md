@@ -4,9 +4,11 @@ Unofficial MCP server and CLI for the Azahar 3DS emulator: automate testing of 3
 > **Unofficial.** This project is not affiliated with or endorsed by the
 > [Azahar](https://github.com/azahar-emu/azahar) project.
 
-**Status:** early development (Phase 0 of [docs/PLAN.md](docs/PLAN.md)).
-Only the project skeleton exists; there are no usable commands yet besides
-`version`. Current status and blockers: [NOTES.md](NOTES.md).
+**Status:** early development ([docs/PLAN.md](docs/PLAN.md): Phase 0
+tooling and Phase 1 protocol research done). There are no usable commands
+yet besides `version`. Current status and open questions:
+[NOTES.md](NOTES.md). The Azahar RPC protocol as used by this tool is
+documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## What it will do
 One Go binary, two front ends over the same code:
@@ -66,8 +68,11 @@ Conventional Commit messages and must update the docs (see
 [AGENTS.md](AGENTS.md)).
 
 ## Security
-Azahar's RPC server is unauthenticated. mcp-azahar will bind it to
-127.0.0.1 only; never expose it on a network. Report vulnerabilities
+Azahar's RPC server is unauthenticated and, as of Azahar 2127, always
+listens on UDP port 45987 on **all interfaces** (not configurable). Anyone
+who can reach that port can read and write emulated memory. Never run it on
+an untrusted network; mcp-azahar is meant to keep it off the network
+(design in progress, see [NOTES.md](NOTES.md)). Report vulnerabilities
 privately, see [SECURITY.md](SECURITY.md).
 
 ## License

@@ -6,7 +6,9 @@ Please report vulnerabilities privately through
 not as a public issue.
 
 ## Scope notes
-- Azahar's RPC server is unauthenticated. mcp-azahar binds it to 127.0.0.1;
-  anything that makes it reachable from other hosts is a vulnerability.
+- Azahar's RPC server is unauthenticated and, as of Azahar 2127, listens on
+  UDP port 45987 on all interfaces; Azahar has no setting to restrict it.
+  Anything in mcp-azahar that makes it reachable from other hosts beyond
+  that is a vulnerability.
 - Vulnerabilities in the Azahar emulator itself belong to the
   [Azahar project](https://github.com/azahar-emu/azahar).
