@@ -66,6 +66,8 @@ at the top of each section.
 | goreleaser | 2.20.2 | yes | `Dockerfile` ARG + `.devcontainer/install-go-tools.sh` |
 | Go | 1.27.3 | preinstalled | `devcontainer.json` Go feature |
 | Cobra | v1.10.2 | `go.mod` | `go.mod` |
+| actionlint | 1.7.12 | yes | `Dockerfile` ARG + `.devcontainer/install-go-tools.sh` |
+| apt: shellcheck | bookworm (0.9.0) | yes | `.devcontainer/Dockerfile` |
 | devkitPro (devkitARM, libctru, 3dstools) | — | **no** (HTTP 403) | not recorded; CI fallback planned |
 
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
@@ -84,10 +86,28 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   computes it with `readelf` and extracts with `unsquashfs`, so the AppImage
   is never executed and no FUSE is needed.
 
+## CI (added before Phase 1, on request)
+- Workflows: `ci.yml` (PRs + main) and `release.yml` (`v*` tags). The
+  release fails unless the tag equals `v` + `const version` in
+  `cmd/mcp-azahar/main.go` (`scripts/check-version.sh`), checked in the
+  workflow before building and again as a goreleaser hook (skipped for
+  snapshot builds).
+- Actions pinned to SHAs (checkout v7.0.1, setup-go v7.1.0,
+  golangci-lint-action v9.3.0, goreleaser-action v7.3.0), versions looked up
+  on GitHub 2026-11-18. Dependabot keeps them current.
+- Workflows are untested on GitHub until the branch is pushed; locally,
+  every check they run passes, and `check-version.sh` was tested with
+  matching, mismatching, unprefixed and missing tags.
+- Integration-test job deferred until Azahar runs (glibc blocker) and the
+  fixture exists (Phase 7).
+
 ## Deviations from PLAN.md
 - Phase 0 step 4 asked for `--appimage-extract`; `unsquashfs` at the
   computed offset is used instead (same result, does not execute the
   downloaded runtime).
+- The release version is a constant in `cmd/mcp-azahar/main.go` (requested
+  by the maintainer) instead of being injected only via `-ldflags`;
+  `internal/version` keeps Commit/Date and the formatting.
 - `CLAUDE.md` only imports `AGENTS.md`, so build/test commands and
   conventions live in one place.
 
