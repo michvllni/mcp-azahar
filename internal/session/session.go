@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/michvllni/mcp-azahar/internal/rpc"
 )
 
 // DefaultName is the session used when none is given.
@@ -71,6 +73,10 @@ type Session struct {
 	OutputPath string `json:"output_path,omitempty"`
 	AppPath    string `json:"app_path,omitempty"`
 	ELFPath    string `json:"elf_path,omitempty"`
+	// Held is the input held through this session (hold, touch --hold,
+	// circle-pad --hold). Azahar replaces the whole input on each SetInput,
+	// so every input command merges with it.
+	Held rpc.Input `json:"held_input,omitzero"`
 }
 
 // UserDir returns Azahar's user directory, or "" if unknown (attached).

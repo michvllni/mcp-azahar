@@ -624,6 +624,23 @@ func (m *Manager) removeStale(ctx context.Context, s *session.Session) {
 	}
 }
 
+// Update changes a session file under the store lock.
+func (m *Manager) Update(ctx context.Context, name string, fn func(*session.Session) error) (*session.Session, error) {
+	unlock, err := m.Store.Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	s, err := m.Store.Load(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := fn(s); err != nil {
+		return nil, err
+	}
+	return s, m.Store.Save(s)
+}
+
 // Status describes a session for `status`/`sessions`.
 type Status struct {
 	Session   *session.Session `json:"session"`
