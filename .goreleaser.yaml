@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release config for goreleaser v2. The version comes from the git tag, which
+# the release workflow checks against `const version` in cmd/mcp-azahar/main.go.
+version: 2
+
+project_name: mcp-azahar
+
+before:
+  hooks:
+    - go mod tidy -diff
+    # Real releases only; snapshot builds (CI dry run) have no matching tag.
+    - '{{ if .IsSnapshot }}true{{ else }}./scripts/check-version.sh {{ .Tag }}{{ end }}'
+
+builds:
+  - id: mcp-azahar
+    main: ./cmd/mcp-azahar
+    binary: mcp-azahar
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/michvllni/mcp-azahar/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/michvllni/mcp-azahar/internal/version.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # Tags with a SemVer pre-release suffix (v1.0.0-rc.1) become pre-releases.
+  prerelease: auto
+  footer: |
+    Unofficial tool, not affiliated with the Azahar project. Requires Azahar 2127.0 or newer.

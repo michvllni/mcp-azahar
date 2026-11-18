@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Bug report
+description: mcp-azahar does something wrong or crashes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mcp-azahar is unofficial. Bugs in the emulator itself belong to the
+        [Azahar issue tracker](https://github.com/azahar-emu/azahar/issues).
+        Please don't paste secrets or private ROM paths you don't want public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, MCP tool calls or a minimal sequence file.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Front end
+      options:
+        - CLI
+        - MCP server (serve)
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mcp-azahar version
+      description: Output of `mcp-azahar version`.
+    validations:
+      required: true
+  - type: input
+    id: azahar
+    attributes:
+      label: Azahar version
+      placeholder: 2127.0-rc3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and environment
+      placeholder: Debian 13 dev container, Xvfb / Ubuntu 24.04 GitHub runner / macOS 15
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client (if applicable)
+      placeholder: Claude Code 2.x, Claude Desktop, ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Output with `--json` if possible, plus `mcp-azahar logs --tail 100`.
+      render: text
