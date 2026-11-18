@@ -79,6 +79,7 @@ with `testdata/fixture/build.sh` where devkitPro works:
 ```sh
 MCPAZ_FIXTURE_DIR=$PWD/build go test -tags integration -run TestFixture -v ./cmd/mcp-azahar/
 ```
+Run live tests of several packages with `-p 1` (one RPC port per host).
 Live capture test against a running Azahar (single-screen layout):
 `AZAHAR_RPC_ADDR=127.0.0.1:45987 go test -tags integration -run TestLiveCapture -v ./internal/capture/`.
 The `internal/emu` unit tests run the test binary itself as a fake Azahar
@@ -197,7 +198,8 @@ goreleaser check && goreleaser build --snapshot --clean
 - Azahar ignores SIGINT/SIGTERM; SIGHUP stops it, SIGKILL as last resort.
 - Azahar shows no first-run dialog with a fresh config dir.
 - Azahar buffers its log file and flushes only on errors unless
-  `instant_debug_log=true`; app debug output is Debug level. Both are in
+  `instant_debug_log=true` (costs: per-entry flush, 100 MiB cap; see
+  PROTOCOL.md §7); app debug output is Debug level. Both are in
   the seed config (`internal/emu/seed.go`, PROTOCOL.md §7); attached
   sessions need them set by hand to see app output live.
 - RPC (see `docs/PROTOCOL.md`): binds `0.0.0.0:45987`, hard-coded, so one

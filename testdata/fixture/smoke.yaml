@@ -14,8 +14,7 @@ steps:
   - name: A was seen (KEY_A = 1)
     wait_for: {target: test_state.last_buttons, value: 1, timeout: 5s}
   - touch: {x: 100, y: 50, for: 200ms}
-  - wait_for: {target: test_state.touches, op: ge, value: 1, timeout: 5s}
-  - assert: {target: test_state.touch_x, value: 100}
+  - wait_for: {target: test_state.touch_x, value: 100, timeout: 5s}
   - assert: {target: test_state.touch_y, value: 50}
   - screenshot: {screen: both, output: smoke.png}
   - log_contains: {text: "fixture: touch 100 50", timeout: 5s}

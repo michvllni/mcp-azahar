@@ -356,7 +356,11 @@ confirmClose=false
   a running Azahar's log lags by minutes or until the next error
   (*observed*: no app lines after 15 s). `instant_debug_log=true`
   (group `Debugging`, `config.cpp:535`; `backend.cpp:350-354`) writes and
-  flushes every entry.
+  flushes every entry. Cost: it bypasses the logging thread, so each entry
+  is written and flushed on the thread that logs it (emulation, GPU, RPC),
+  which slows apps that log a lot; and file logging stops for good once
+  the file passes 100 MiB (`backend.cpp:178-185`), sooner with app debug
+  output enabled.
 - Lines look like (*observed*)
   `[   0.525429] Debug.Emulated <Debug> core/hle/kernel/svc.cpp:OutputDebugString:1190: fixture: ready ...`.
 - `enable_rpc_server`: §1.

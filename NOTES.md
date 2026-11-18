@@ -97,6 +97,15 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   level (dropped by the default `*:Info`). The seed config now sets
   `instant_debug_log=true` and `log_filter=*:Info Debug.Emulated:Debug`
   (PROTOCOL.md §7). Without them `log_contains` could not see app lines.
+  Trade-off (review of #16): every entry is then flushed on the logging
+  thread, slower for log-heavy apps, and Azahar stops file logging at
+  100 MiB. Kept on by default: live logs are what `logs`, `log_contains`
+  and the MCP log tool exist for; revisit with an opt-out flag if an app
+  logs heavily.
+- In the Coder workspace (glibc older than trixie) `/opt/azahar/AppRun`
+  fails (`checkrt: GLIBC_2.38 not found`); use the patched
+  `AZAHAR_BIN=/opt/azahar/usr/bin/azahar` there. CI and the trixie dev
+  container use `AppRun`.
 - The integration test runs the real CLI binary (the test binary with
   `MCPAZ_TEST_MAIN=1`) and checks screenshot pixels: the fixture's
   colour bars and the touch marker come through the RPC screenshot

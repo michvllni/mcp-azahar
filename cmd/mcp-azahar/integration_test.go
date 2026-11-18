@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -99,7 +100,16 @@ func TestFixture(t *testing.T) {
 		cli(t, 0, "release")
 		cli(t, 0, "wait-for", "test_state.held", "0", "--timeout", "5s")
 	})
+	// touchAt touches (x, y) and waits until the app recorded it, so the
+	// pixel checks do not depend on earlier subtests.
+	touchAt := func(t *testing.T, x, y int) {
+		t.Helper()
+		cli(t, 0, "touch", fmt.Sprint(x), fmt.Sprint(y), "--for", "200ms")
+		cli(t, 0, "wait-for", "test_state.touch_x", fmt.Sprint(x), "--timeout", "5s")
+		cli(t, 0, "wait-for", "test_state.touch_y", fmt.Sprint(y), "--timeout", "5s")
+	}
 	t.Run("screenshot", func(t *testing.T) {
+		touchAt(t, 160, 120)
 		out := filepath.Join(work, "both.png")
 		cli(t, 0, "screenshot", "--screen", "both", "-o", out)
 		f, err := os.Open(out)
@@ -157,7 +167,10 @@ func TestFixture(t *testing.T) {
 		_ = os.WriteFile(bad, []byte("steps:\n  - assert: {target: test_state.magic, value: 0}\n"), 0o600)
 		cli(t, 3, "sequence", bad)
 	})
-	t.Run("mcp", func(t *testing.T) { mcpSmoke(t, env, work) })
+	t.Run("mcp", func(t *testing.T) {
+		touchAt(t, 100, 50)
+		mcpSmoke(t, env, work)
+	})
 }
 
 // addressOf returns the hex address of a symbol (without 0x).
@@ -268,7 +281,7 @@ func mcpSmoke(t *testing.T, env []string, dir string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkFixtureImage(t, img, 100, 50) // touched last by smoke.yaml
+		checkFixtureImage(t, img, 100, 50) // touched by the mcp subtest
 		return
 	}
 	t.Fatalf("no image content: %v", res["content"])

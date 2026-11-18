@@ -74,6 +74,7 @@ jobs:
   fixture:
     name: Build test fixture
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # devkitPro refuses downloads from some networks; its image works in CI.
     container: devkitpro/devkitarm:20260610@sha256:116afba8df8453961de2936ffab20dd441edf4d682856c1ec8b0e53d7ed0bbf5
     steps:
@@ -89,6 +90,7 @@ jobs:
     name: Integration tests (Azahar)
     needs: fixture
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Debian trixie like the dev container: Azahar 2127 needs glibc >= 2.39.
     container: debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     steps:
@@ -106,8 +108,11 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - name: Install Azahar (version and digest pinned in the script, as in the Dockerfile)
-        run: .devcontainer/install-azahar.sh -d /opt/azahar
+      - name: Install Azahar (the version and digest pinned in the Dockerfile)
+        run: |
+          ver="$(sed -n 's/^ARG AZAHAR_VERSION=//p' .devcontainer/Dockerfile)"
+          sha="$(sed -n 's/^ARG AZAHAR_SHA256=//p' .devcontainer/Dockerfile)"
+          .devcontainer/install-azahar.sh -t "$ver" -s "$sha" -d /opt/azahar
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: fixture
