@@ -105,14 +105,11 @@ goreleaser check && goreleaser build --snapshot --clean
 - `.devcontainer/install-azahar.sh` extracts the AppImage with `unsquashfs`
   into `/opt/azahar`; start Azahar via `$AZAHAR_BIN` (`/opt/azahar/AppRun`,
   which injects the bundled libstdc++).
-- `.devcontainer/patch-azahar-bookworm.sh` is a stopgap only for a
-  container still on bookworm; afterwards start `/opt/azahar/usr/bin/azahar`
-  directly. Delete it once the container runs trixie.
 - Run Azahar headless under Xvfb (`xvfb-run -a ...`), Mesa llvmpipe.
 
 ## Pitfalls
-- Azahar 2127 AppImages need glibc >= 2.39 and a HarfBuzz newer than 6.0; Debian
-  bookworm cannot run them unpatched. Never fix this with a global
+- Azahar 2127 AppImages need glibc >= 2.39 and a HarfBuzz newer than 6.0,
+  hence the trixie base. Never run Azahar with a different glibc via
   `LD_LIBRARY_PATH`: Azahar spawns `sh`, which then crashes.
 - Azahar ignores SIGTERM: stopping it needs SIGKILL after a grace period.
 - Azahar shows no first-run dialog with a fresh config dir.
