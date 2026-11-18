@@ -148,3 +148,8 @@ goreleaser check && goreleaser build --snapshot --clean
 - The Azahar RPC server is unauthenticated and listens on all interfaces
   (fixed port 45987); never make it more reachable than that.
 - Screenshots come from Azahar's RPC (DECISIONS.md D4), not from X11.
+- One RPC-enabled Azahar per host with Azahar 2127 (DECISIONS.md D9):
+  never start a second one or reuse a port held by something else; keep
+  the RPC endpoint in session data instead of assuming port 45987.
+- Never file issues or comment on azahar-emu/azahar yourself, and do not
+  commit drafts for upstream: hand them to the maintainer, who posts them.

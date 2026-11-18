@@ -193,6 +193,9 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 - Integration-test job deferred until the fixture exists (Phase 7).
 
 ## Deviations from PLAN.md
+- Parallel sessions on one host are not supported with Azahar 2127
+  (DECISIONS.md D9): one RPC-enabled Azahar per host, upstream request for a
+  configurable port, namespaces in reserve. PLAN Phases 3, 7 and 8 updated.
 - Screenshots use Azahar's RPC instead of X11 capture (DECISIONS.md D4,
   PLAN Phase 4 updated). Phase 2 keeps the RPC transport behind an
   interface so a per-session relay (parallel-sessions question) can plug in
@@ -212,21 +215,18 @@ Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
   conventions live in one place.
 
 ## Out of scope (do not build)
-- Upstream Azahar changes. Draft feature requests in
-  `docs/upstream-proposal.md` instead. Since Azahar 2127 already has an RPC
+- Upstream Azahar changes. Feature requests are drafted for the maintainer
+  (not committed) and filed by them. Since Azahar 2127 already has an RPC
   screenshot command, the candidates are now: configurable RPC port and
   bind address (default 127.0.0.1), status codes in replies, and
   pause/resume, frame advance, reset and shutdown requests.
 
 ## Open questions
-- **Parallel sessions (deferred by the maintainer; decide before Phase 3):** Azahar's RPC port is fixed (45987) on all
-  interfaces. Options: (a) one network namespace per session (unprivileged
-  `unshare --user --net`), with mcp-azahar reaching it through a small relay
-  over a Unix socket in the session dir, which also keeps RPC off the
-  network; (b) one session per host/container, documented; (c) wait for an
-  upstream change. Proposal: (a), with (b) as fallback where namespaces are
-  unavailable. To verify: GitHub's Ubuntu 24.04 runners restrict
-  unprivileged user namespaces via AppArmor.
+- Upstream feature request for a configurable RPC port/bind address
+  (DECISIONS.md D9): filed by the maintainer on 2026-11-18 as
+  https://github.com/azahar-emu/azahar/issues/2829 (open). Offers a PR if
+  welcome. When it lands, switch sessions to a free port on 127.0.0.1 for
+  Azahar versions that support it (D9 "Revisit if").
 - Not verified yet: whether the SetInput override survives LoadState;
   whether a user pause (not just an error dialog) also blocks RPC.
 - Does the Coder template build from this repo's `.devcontainer/`, or must

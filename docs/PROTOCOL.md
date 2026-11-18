@@ -390,15 +390,13 @@ namespaces through AppArmor by default.
   - ScreenshotInfo result codes mapped to errors;
   - one retry and process re-selection after LoadState.
 - **Phase 3 (sessions):**
-  - one RPC port per network namespace; parallel sessions need namespaces
-    or must be serialized (decision needed);
+  - one RPC port per network namespace: one session per host for now
+    (DECISIONS.md D9);
   - stop with SIGHUP → SIGKILL;
   - launch is done when RPC answers.
-- **Phase 4 (screenshots):** Azahar 2127 **has** an RPC screenshot command,
-  which contradicts DECISIONS.md D4's premise. Proposal: use the RPC
-  backend as the default and keep X11 capture as a fallback, or drop it
-  (decision needed).
-- **Upstream proposal** (`docs/upstream-proposal.md`, later):
+- **Phase 4 (screenshots):** Azahar 2127 **has** an RPC screenshot command;
+  screenshots use it (DECISIONS.md D4).
+- **Upstream proposal** (drafted for the maintainer, not committed):
   - configurable RPC port and bind address (default 127.0.0.1);
   - status codes in replies;
   - pause/resume, frame advance, reset and shutdown requests.
