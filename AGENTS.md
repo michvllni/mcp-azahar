@@ -35,9 +35,13 @@ internal/            all behavior; CLI and MCP call the same functions
   version/           version string formatting; Commit/Date set via -ldflags
 scripts/             check-version.sh (tag vs. version), check-spdx.sh,
                      build-testdata.sh (rebuilds the committed test ELFs),
-                     azahar-source.sh (Azahar source tarball + license)
+                     azahar-source.sh (Azahar source tarball + license),
+                     npm-packages.sh (build/publish the npm packages),
+                     npm-bootstrap.sh (one-time npm trust setup)
 packaging/image/     release container image (Dockerfile, NOTICE.md),
                      built by goreleaser dockers_v2
+packaging/npm/       npm wrapper package mcp-azahar (bin/mcp-azahar.js runs
+                     the binary of mcp-azahar-<os>-<cpu>)
 .devcontainer/       Dockerfile, devcontainer.json, pinned install scripts
 .github/workflows/   ci.yml (PRs and main), release.yml (v* tags)
 .github/             issue templates, PR template, renovate.json5
@@ -122,6 +126,15 @@ goreleaser check && goreleaser build --snapshot --clean
   too. The SBOM attestation and the push only run at a real release (CI
   builds a snapshot without them). CI job
   `image` builds it as a snapshot and launches the fixture inside it.
+- npm: the release job then publishes `mcp-azahar-<os>-<cpu>` and the
+  wrapper `mcp-azahar` with trusted publishing (`id-token: write`, no
+  token; `-rc` versions get the dist-tag `next`). Before the first
+  release the maintainer runs `scripts/npm-bootstrap.sh` once (npm login
+  with 2FA): trust can only be set for existing packages and expires
+  unless a publish follows within 2 days. Re-runs skip published versions.
+  The `checks` CI job builds the packages, dry-runs the publish, installs
+  the wrapper and runs it. `repository.url` must stay
+  `git+https://github.com/michvllni/mcp-azahar.git` (npm checks it).
 - Release process: bump `const version` (SemVer, no `v`) in a PR, merge,
   then create a GitHub release on `main` with a new tag `v<version>` and
   publish it. Do not push tags by hand. Only the maintainer releases. If

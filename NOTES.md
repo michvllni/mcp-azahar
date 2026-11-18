@@ -87,6 +87,23 @@ at the top of each section.
 Verified: `xvfb-run glxinfo -B` → llvmpipe, OpenGL 4.5 (Mesa 22.3.6).
 
 ## Findings
+### Phase 8b (npm)
+- Layout per D10: wrapper `mcp-azahar` (Node script, no dependencies of
+  its own) with optionalDependencies on six platform packages built from
+  goreleaser's `dist/artifacts.json`; npm installs only the one whose
+  `os`/`cpu` match. Without arguments the wrapper runs `serve`.
+- Trusted publishing (docs.npmjs.com/trusted-publishers, read
+  2026-11-18): npm CLI >= 11.5.1 and Node >= 22.14 (the job uses Node 24),
+  `id-token: write`, GitHub-hosted runners, provenance automatic,
+  `repository.url` must match the repo exactly. Configured per package;
+  `npm trust` (npm >= 11.15.0, 2FA) needs the package to exist, hence the
+  placeholder bootstrap. A new configuration expires unless a publish
+  succeeds within 2 days. The docs disagree on one vs. up to 10
+  configurations per package; we need one.
+- Local check here: packed tarballs installed into a scratch project;
+  `mcp-azahar version` and the default `serve` (tools/list: 20 tools)
+  worked through the wrapper; exit codes pass through.
+
 ### Phase 8a (container image)
 - Image built by goreleaser `dockers_v2` (since 2.12; still marked
   provisional, becomes `dockers` in v3) from `packaging/image/Dockerfile`:

@@ -13,6 +13,9 @@
   // Give upstream a few days to pull broken or malicious releases.
   minimumReleaseAge: '3 days',
   postUpdateOptions: ['gomodTidy'],
+  // The npm wrapper's optionalDependencies are our own platform packages,
+  // versioned by scripts/npm-packages.sh at release time: not dependencies.
+  ignorePaths: ['**/node_modules/**', 'packaging/npm/**'],
   customManagers: [
     {
       // Versions annotated with a comment on the line above, e.g.
