@@ -28,7 +28,7 @@ set -euo pipefail
 # renovate: datasource=github-releases depName=golangci/golangci-lint
 lint="${GOLANGCI_LINT_VERSION:-2.15.0}"
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
-rel="${GORELEASER_VERSION:-2.20.2}"
+rel="${GORELEASER_VERSION:-2.20.3}"
 # renovate: datasource=github-releases depName=rhysd/actionlint
 al="${ACTIONLINT_VERSION:-1.7.12}"
 dir="/usr/local/bin"
