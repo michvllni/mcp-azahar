@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # renovate: datasource=github-releases depName=modelcontextprotocol/registry
-version="${MCP_PUBLISHER_VERSION:-v1.8.1}"
+version="${MCP_PUBLISHER_VERSION:-v1.8.16}"
 
 # usage: print the header help block. No arguments; writes to stdout.
 usage() {
